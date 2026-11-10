@@ -11,6 +11,21 @@ def is_browser(exe: str) -> bool:
     return (exe or "").lower() in BROWSER_EXES
 
 
+# 창 목록 맨 앞(왼쪽 위)에 둘 순서: 엣지 → 크롬 → 웨일 → 나머지
+_LIST_RANK = {"msedge.exe": 0, "chrome.exe": 1, "whale.exe": 2}
+
+
+def list_order(entries: list) -> list:
+    """창 목록 순서. 브라우저가 맨 앞, 같은 앱 안에서는 보이는 창 → 최소화된 창,
+    그 안에서는 원래 순서(앞에 있던 창 먼저)를 지킨다."""
+    def key(pair):
+        z, e = pair
+        rank = _LIST_RANK.get((getattr(e, "exe", "") or "").lower(), len(_LIST_RANK))
+        return (rank, bool(getattr(e, "minimized", False)), z)
+
+    return [e for _, e in sorted(enumerate(entries), key=key)]
+
+
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip().lower()
 

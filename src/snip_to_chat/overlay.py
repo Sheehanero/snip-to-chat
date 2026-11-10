@@ -9,6 +9,7 @@ Tab = 창 목록: 다른 창에 가려졌거나 최소화된 창까지 썸네일
 
 from __future__ import annotations
 
+import queue
 import time
 import tkinter as tk
 from dataclasses import dataclass
@@ -17,9 +18,10 @@ from typing import Callable, Sequence
 from PIL import Image, ImageTk
 
 from .geometry import (
-    Rect, fit_inside, grid_layout, hit_test, is_drag, monitor_at, place_in, rect_from_drag, rows_layout,
+    Rect, fit_inside, grid_layout, hit_test, is_drag, monitor_at, place_in, rect_from_drag,
 )
 from .imaging import dim
+from .tabmatch import list_order
 
 ACCENT = "#378ADD"
 FONT = ("Malgun Gothic", 11)
@@ -45,6 +47,7 @@ class Selection:
     window: object | None  # win32.WindowInfo
     label: str
     tab: object = None  # kind == "tab"일 때 browser_tabs.TabInfo
+    image: object = None  # 미리보기로 이미 찍어 둔 그림 (있으면 다시 찍지 않는다)
 
 
 @dataclass(eq=False)
@@ -53,6 +56,9 @@ class TabRow:
     tab: object  # TabInfo
     frame_id: int
     badge_ids: tuple = ()
+    thumb_id: int | None = None
+    photo: object = None
+    image: object = None  # 미리보기 원본 (고르면 그대로 첨부)
 
 
 class Overlay:
@@ -72,6 +78,7 @@ class Overlay:
         thumbnail: Callable[[object], Image.Image | None] | None = None,
         start_in_list: bool = False,
         tabs_of: Callable[[object], list | None] | None = None,
+        tab_previews: Callable[[object, Callable], object] | None = None,
     ):
         self.root = root
         self.active = active  # 지금 쓰던 창 (Space로 바로 고름). 없으면 None
@@ -87,6 +94,9 @@ class Overlay:
         self.tab_rows: list[TabRow] = []
         self._tab_ids: list[int] = []
         self._hover_row: TabRow | None = None
+        self.tab_previews = tab_previews  # (창, 그림받기) → 멈출 수 있는 미리보기 작업
+        self._previewer = None
+        self._preview_q: queue.Queue = queue.Queue()
         self.shot = screenshot
         self.origin = origin
         # 듀얼 모니터: 선택 화면은 모든 모니터를 덮지만, 안내 문구·담기 바·이름표는
@@ -275,7 +285,8 @@ class Overlay:
             m.right - 28, m.top + 24, anchor="ne", fill="#bbbbbb", font=FONT,
             text="클릭: 첨부   Shift+클릭: 담기   Space: 지금 쓰던 창   Tab: 돌아가기   Esc: 취소",
         ))
-        entries = list(self.windows) + list(self.hidden_windows)
+        # 엣지·크롬을 왼쪽 위에, 같은 앱 안에서는 앞에 있던 창 먼저
+        entries = list_order(list(self.windows) + list(self.hidden_windows))
         area = Rect(m.left + 28, m.top + 64, m.right - 28, m.bottom - 80)  # 아래는 담기 바 자리
         rects = grid_layout(len(entries), area)
         self.cards = []
@@ -317,8 +328,8 @@ class Overlay:
         self._place_chrome()
 
     @staticmethod
-    def _thumb_box(r: Rect) -> Rect:
-        return Rect(r.left + 6, r.top + 6, r.right - 6, r.bottom - 30)
+    def _thumb_box(r: Rect, label_h: int = 30) -> Rect:
+        return Rect(r.left + 6, r.top + 6, r.right - 6, r.bottom - label_h)
 
     def _next_thumb(self):
         """썸네일을 한 장씩 채운다 (한꺼번에 하면 목록이 늦게 뜬다)."""
@@ -348,6 +359,7 @@ class Overlay:
 
     # ------------------------------------------------------------ 탭 목록 (브라우저)
     def _open_tabs(self, window, tabs: list):
+        """브라우저 창의 탭들을 카드로 보여준다. 미리보기는 뒤에서 탭을 하나씩 넘기며 채운다."""
         self.tab_window = window
         self.tab_rows = []
         self._hover_row = None
@@ -363,20 +375,25 @@ class Overlay:
             m.right - 28, m.top + 24, anchor="ne", fill="#bbbbbb", font=FONT,
             text="클릭: 첨부   Shift+클릭: 담기   Tab: 창 목록으로   Esc: 취소",
         ))
+        minimized = bool(getattr(window, "minimized", False))
         ids.append(c.create_text(
             m.left + 28, m.top + 52, anchor="nw", fill="#999999", font=FONT_SMALL,
-            text="안 보이는 탭은 잠깐 그 탭으로 바꿔서 찍고 원래 보던 탭으로 돌려놔요",
+            text=("최소화된 창이라 미리보기 없이 제목만 보여요. 고르면 잠깐 펼쳐서 찍어요" if minimized else
+                  "미리보기는 이 화면 뒤에서 탭을 하나씩 넘기며 채우고, 끝나면 원래 보던 탭으로 돌려놔요"),
         ))
         area = Rect(m.left + 28, m.top + 86, m.right - 28, m.bottom - 80)
-        rects = rows_layout(len(tabs), area)
+        rects = grid_layout(len(tabs), area, label_h=34, max_w=380)
         for tab, r in zip(tabs, rects):
-            sel = bool(getattr(tab, "selected", False))
+            shown = bool(getattr(tab, "selected", False))
             frame = c.create_rectangle(r.left, r.top, r.right, r.bottom,
-                                       fill="#22324a" if sel else "#262626", outline="#444444", width=2)
+                                       fill="#22324a" if shown else "#262626", outline="#444444", width=2)
             ids.append(frame)
-            prefix = "지금 보이는 탭 · " if sel else ""
-            ids.append(c.create_text(r.left + 14, (r.top + r.bottom) // 2, anchor="w", fill="#eeeeee", font=FONT,
-                                     text=_clip(prefix + _tab_title(tab), r.width * 2 // 3)))
+            box = self._thumb_box(r, label_h=34)
+            ids.append(c.create_text((box.left + box.right) // 2, (box.top + box.bottom) // 2,
+                                     text="" if minimized else "미리보기 불러오는 중…", fill="#888888", font=FONT_SMALL))
+            prefix = "● 지금 보이는 탭 · " if shown else ""
+            ids.append(c.create_text(r.left + 8, r.bottom - 28, anchor="nw", fill="#eeeeee", font=FONT_SMALL,
+                                     text=_clip(prefix + _tab_title(tab), r.width), width=r.width - 16))
             self.tab_rows.append(TabRow(r, tab, frame))
         if len(rects) < len(tabs):
             ids.append(c.create_text((m.left + m.right) // 2, m.bottom - 64, fill="#bbbbbb", font=FONT_SMALL,
@@ -385,19 +402,74 @@ class Overlay:
             c.tag_raise(item)
         for s_ in self.bag:
             self._mark_row_for(s_)
+        if self.tab_previews is not None and not minimized and self.tab_rows:
+            try:
+                self._previewer = self.tab_previews(window, lambda i, n, img: self._preview_q.put((i, n, img)))
+            except Exception:
+                self._previewer = None
+            self.top.after(40, self._drain_previews)
+
+    def _drain_previews(self):
+        """미리보기 스레드가 넘긴 그림을 Tk 스레드에서 카드에 붙인다."""
+        if self.closed or self.tab_window is None:
+            return
+        from .tabmatch import pick_tab
+
+        while True:
+            try:
+                index, name, img = self._preview_q.get_nowait()
+            except queue.Empty:
+                break
+            tabs = [row.tab for row in self.tab_rows]
+            tab = pick_tab(tabs, index, name)
+            row = next((r for r in self.tab_rows if r.tab is tab), None)
+            if row is None or img is None:
+                continue
+            row.image = img
+            box = self._thumb_box(row.rect, label_h=34)
+            w, h = fit_inside(img.width, img.height, box.width, box.height)
+            if w and h:
+                if row.thumb_id:
+                    self.canvas.delete(row.thumb_id)
+                row.photo = ImageTk.PhotoImage(img.convert("RGB").resize((w, h), Image.BILINEAR))
+                row.thumb_id = self.canvas.create_image(
+                    (box.left + box.right) // 2, (box.top + box.bottom) // 2, image=row.photo
+                )
+                for i in row.badge_ids:
+                    self.canvas.tag_raise(i)
+        if self._previewer is not None and not getattr(self._previewer, "is_alive", lambda: False)() \
+                and self._preview_q.empty():
+            return
+        self.top.after(40, self._drain_previews)
+
+    def _stop_previews(self, wait: float = 3.0):
+        """미리보기를 멈추고 원래 탭으로 돌아올 때까지 기다린다 (그 뒤에 탭을 찍어야 엉키지 않는다)."""
+        p = self._previewer
+        self._previewer = None
+        if p is None:
+            return
+        try:
+            p.stop()
+            p.join(timeout=wait)
+        except Exception:
+            pass
 
     def _close_tabs(self):
         if self.tab_window is None:
             return
+        self._stop_previews()
         for i in self._tab_ids:
             self.canvas.delete(i)
         for row in self.tab_rows:
-            for i in row.badge_ids:
-                self.canvas.delete(i)
+            for i in (row.thumb_id, *row.badge_ids):
+                if i:
+                    self.canvas.delete(i)
         self._tab_ids = []
         self.tab_rows = []
         self.tab_window = None
         self._hover_row = None
+        while not self._preview_q.empty():
+            self._preview_q.get_nowait()
         # 탭을 담았으면 창 목록 카드에도 표시
         for s_ in self.bag:
             self._mark_card_for(s_)
@@ -427,9 +499,9 @@ class Overlay:
                 c = self.canvas
                 r = row.rect
                 n = self.bag.index(sel) + 1
-                c.itemconfigure(row.frame_id, outline=ACCENT, width=3)
-                bg = c.create_oval(r.right - 36, r.top + 7, r.right - 6, r.bottom - 7, fill=ACCENT, outline="")
-                tx = c.create_text(r.right - 21, (r.top + r.bottom) // 2, text=str(n), fill="#ffffff", font=FONT_BOLD)
+                c.itemconfigure(row.frame_id, outline=ACCENT, width=4)
+                bg = c.create_oval(r.right - 38, r.top + 8, r.right - 8, r.top + 38, fill=ACCENT, outline="")
+                tx = c.create_text(r.right - 23, r.top + 23, text=str(n), fill="#ffffff", font=FONT_BOLD)
                 row.badge_ids = (bg, tx)
                 return
 
@@ -526,7 +598,7 @@ class Overlay:
                 return
             w = self.tab_window
             app = w.label.split(" · ")[0]
-            self._add(Selection("tab", w.rect, w, f"{app} 탭 · {_tab_title(row.tab)}", tab=row.tab), shift)
+            self._add(Selection("tab", w.rect, w, f"{app} 탭 · {_tab_title(row.tab)}", tab=row.tab, image=row.image), shift)
             return
 
         if self.list_mode:  # 목록에서는 카드 클릭만 (드래그 영역 없음)
@@ -602,6 +674,7 @@ class Overlay:
 
     # ------------------------------------------------------------ 끝내기
     def _close(self):
+        self._stop_previews()
         self.closed = True
         try:
             self.top.destroy()

@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from snip_to_chat.tabmatch import display_name, is_browser, pick_tab, title_shows_tab, wait_condition
+from snip_to_chat.tabmatch import display_name, is_browser, list_order, pick_tab, title_shows_tab, wait_condition
 
 
 @dataclass
@@ -94,6 +94,36 @@ def test_pick_tab_duplicate_names_nearest_position():
 def test_pick_tab_closed_returns_none():
     assert pick_tab([T("메일", 0)], 1, "Gemini") is None
     assert pick_tab([], 0, "메일") is None
+
+
+@dataclass
+class W:
+    label: str
+    exe: str
+    minimized: bool = False
+
+
+def test_list_order_browsers_first_edge_then_chrome():
+    hwp = W("한글", "hwp.exe")
+    chrome1 = W("크롬1", "chrome.exe")
+    edge = W("엣지", "msedge.exe")
+    memo = W("메모장", "notepad.exe")
+    chrome2 = W("크롬2", "Chrome.exe")
+    edge_min = W("엣지-최소화", "msedge.exe", minimized=True)
+    hwp_min = W("한글-최소화", "hwp.exe", minimized=True)
+    claude = W("Claude", "claude.exe")
+    # 보이는 창(z-순서) 뒤에 최소화된 창이 붙어 들어온다
+    entries = [hwp, chrome1, edge, memo, chrome2, claude, edge_min, hwp_min]
+    got = [e.label for e in list_order(entries)]
+    assert got == ["엣지", "엣지-최소화", "크롬1", "크롬2", "한글", "메모장", "Claude", "한글-최소화"]
+
+
+def test_list_order_keeps_objects_and_handles_missing_exe():
+    class NoExe:
+        label = "?"
+
+    a, b = NoExe(), W("엣지", "msedge.exe")
+    assert list_order([a, b]) == [b, a] and list_order([]) == []
 
 
 @pytest.mark.parametrize("exe, ok", [("chrome.exe", True), ("MSEDGE.EXE", True), ("whale.exe", True), ("hwp.exe", False), ("", False)])

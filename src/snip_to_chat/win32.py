@@ -539,7 +539,7 @@ class CaptureError(RuntimeError):
     pass
 
 
-def capture_window(hwnd, screen: tuple[Image.Image, Rect] | None = None) -> CaptureResult:
+def capture_window(hwnd, screen: tuple[Image.Image, Rect] | None = None, fallback: bool = True) -> CaptureResult:
     """창 하나를 찍는다. 다른 창에 가려져 있어도 그 창 내용 그대로 찍는 것이 목표다.
 
     PrintWindow 결과가 한 색으로만 채워져 있으면(=캡처 실패) 화면 잘라내기로 대체한다.
@@ -564,6 +564,8 @@ def capture_window(hwnd, screen: tuple[Image.Image, Rect] | None = None) -> Capt
             if not is_blank(img):
                 return CaptureResult(img, method, False)
 
+    if not fallback:  # 미리보기처럼 화면을 잘라내면 안 되는 경우 (선택 화면이 찍혀 버린다)
+        raise CaptureError("창을 그리지 못했어요 (빈 화면)")
     # 대체: 화면에 보이는 그대로 잘라낸다 (가려진 부분은 가린 창이 찍힌다)
     if screen is None:
         img, _ = grab_screen(vr)

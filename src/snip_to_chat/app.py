@@ -227,6 +227,14 @@ class App:
             self.diag.error(f"탭 목록 읽기 실패: {e}")
             return None
 
+    def _tab_previews(self, w, on_image):
+        """탭 목록 미리보기를 뒤에서 채우는 작업을 시작한다 (선택 화면이 닫히면 멈추고 원래 탭으로 복귀)."""
+        from . import browser_tabs
+
+        p = browser_tabs.TabPreviewer(w.hwnd, on_image)
+        p.start()
+        return p
+
     def _thumbnail(self, w):
         """창 목록 썸네일: 가려진 창도 PrintWindow로 내용 그대로. 최소화된 창은 목록에서 고를 때 찍는다."""
         if getattr(w, "minimized", False):
@@ -266,7 +274,7 @@ class App:
             self.root, shot, origin, windows, finished, cancelled,
             max_items=MAX_IMAGES_PER_MESSAGE, monitors=monitors, cursor=cursor, active=active,
             hidden_windows=hidden, thumbnail=self._thumbnail, start_in_list=start_in_list,
-            tabs_of=self._tabs_of,
+            tabs_of=self._tabs_of, tab_previews=self._tab_previews,
         )
 
     def _capture_selection(self, sel: Selection, shot: Image.Image, origin: Rect) -> Captured | None:
@@ -277,6 +285,9 @@ class App:
             img = shot.crop(box.as_box())
             self.diag.capture("region", "screen", img.size, False)
             return Captured(img, "region", sel.label, "screen")
+        if sel.kind == "tab" and sel.image is not None:  # 미리보기로 이미 찍어 둔 그림
+            self.diag.capture("tab", "tab-preview", sel.image.size, False)
+            return Captured(sel.image, "tab", sel.label, "tab-preview")
         if sel.kind == "tab":
             try:
                 from . import browser_tabs

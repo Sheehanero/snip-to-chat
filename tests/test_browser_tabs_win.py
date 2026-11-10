@@ -131,3 +131,81 @@ def test_capture_tab_of_covered_window(tmp_path):
     finally:
         _kill_tree(p.pid)
         _kill_tree(cover.pid)
+
+
+GREEN = "data:text/html,<title>GREENTAB</title><body style='margin:0;background:%2300ff00'></body>"
+
+
+def _is_green(c):
+    r, g, b = c
+    return g > 200 and r < 60 and b < 60
+
+
+@pytest.mark.parametrize("exe_name", list(BROWSERS))
+def test_previewer_shows_every_tab_and_restores(exe_name, tmp_path):
+    """탭 미리보기: 탭 3개를 모두 찍고(각자 제 색), 끝나면 원래 보던 탭으로 돌아오는지."""
+    exe = BROWSERS[exe_name]
+    if not os.path.exists(exe):
+        pytest.skip(f"{exe_name} 없음")
+    from snip_to_chat import browser_tabs
+
+    p = subprocess.Popen([
+        exe, f"--user-data-dir={tmp_path / 'profile'}", "--no-first-run", "--no-default-browser-check",
+        "--disable-sync", "--new-window", "--window-size=900,650", "--window-position=80,80", RED, BLUE, GREEN,
+    ])
+    try:
+        win = _find_window(exe_name)
+        assert win is not None
+        time.sleep(2.0)
+        before = [t for t in browser_tabs.list_tabs(win.hwnd) if t.selected][0].name
+
+        got = {}
+        t0 = time.perf_counter()
+        pv = browser_tabs.TabPreviewer(win.hwnd, lambda i, n, img: got.__setitem__(n, img))
+        pv.start()
+        pv.join(timeout=20)
+        took = time.perf_counter() - t0
+        print(f"{exe_name} 미리보기 {len(got)}장 · {took:.2f}초 · 오류 '{pv.error}' · "
+              + ", ".join(f"{n[:8]}={_center_color(im)}" for n, im in got.items()))
+        assert not pv.is_alive() and pv.restored.is_set() and not pv.error
+        colors = {("REDTAB", "red"), ("BLUETAB", "blue"), ("GREENTAB", "green")}
+        for key, color in colors:
+            name = next((n for n in got if key in n), None)
+            assert name is not None, f"{key} 미리보기 없음: {list(got)}"
+            c = _center_color(got[name])
+            assert (_is_green(c) if color == "green" else _is(c, color)), (key, c)
+        time.sleep(0.4)
+        now = [t for t in browser_tabs.list_tabs(win.hwnd) if t.selected][0].name
+        assert now == before, f"원래 탭으로 안 돌아옴: {before} → {now}"
+    finally:
+        _kill_tree(p.pid)
+
+
+def test_previewer_stop_midway_still_restores(tmp_path):
+    exe = BROWSERS["chrome.exe"]
+    if not os.path.exists(exe):
+        pytest.skip("chrome 없음")
+    from snip_to_chat import browser_tabs
+
+    p = subprocess.Popen([
+        exe, f"--user-data-dir={tmp_path / 'profile'}", "--no-first-run", "--no-default-browser-check",
+        "--new-window", RED, BLUE, GREEN, RED.replace("REDTAB", "REDTWO"),
+    ])
+    try:
+        win = _find_window("chrome.exe")
+        assert win is not None
+        time.sleep(2.0)
+        before = [t for t in browser_tabs.list_tabs(win.hwnd) if t.selected][0].name
+        got = []
+        pv = browser_tabs.TabPreviewer(win.hwnd, lambda i, n, img: got.append(n))
+        pv.start()
+        time.sleep(0.9)  # 한두 장 찍는 중에 사용자가 골랐다고 치고 멈춤
+        pv.stop()
+        pv.join(timeout=5)
+        assert not pv.is_alive() and pv.restored.is_set()
+        time.sleep(0.4)
+        now = [t for t in browser_tabs.list_tabs(win.hwnd) if t.selected][0].name
+        print(f"중간 멈춤: {len(got)}장 찍고 멈춤 · 복귀 {before} → {now}")
+        assert now == before
+    finally:
+        _kill_tree(p.pid)

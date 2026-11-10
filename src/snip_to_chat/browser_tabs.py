@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -16,7 +17,7 @@ from .tabmatch import is_browser, pick_tab, same_name, wait_condition
 
 log = logging.getLogger(__name__)
 
-__all__ = ["TabInfo", "is_browser", "list_tabs", "capture_tab"]
+__all__ = ["TabInfo", "TabPreviewer", "is_browser", "list_tabs", "capture_tab"]
 
 
 @dataclass
@@ -35,20 +36,31 @@ _U = None
 _uia = None
 
 
+def _module():
+    import comtypes  # noqa: F401  (import 시 이 스레드의 COM 초기화)
+    import comtypes.client
+
+    try:
+        from comtypes.gen import UIAutomationClient as U
+    except ImportError:  # 개발 환경: 처음 한 번 형식 라이브러리에서 만든다 (실행 파일에는 미리 포함)
+        comtypes.client.GetModule("UIAutomationCore.dll")
+        from comtypes.gen import UIAutomationClient as U
+    return U
+
+
+def _new_client():
+    """지금 스레드용 UI Automation 객체 (스레드마다 따로 만든다)."""
+    import comtypes.client
+
+    U = _module()
+    return U, comtypes.client.CreateObject(U.CUIAutomation, interface=U.IUIAutomation)
+
+
 def _client():
-    """UI Automation 객체. COM은 이 함수를 처음 부른 스레드(Tk 메인 스레드)에서 초기화된다."""
+    """Tk 메인 스레드용 UI Automation 객체 (한 번 만들어 다시 쓴다)."""
     global _U, _uia
     if _uia is None:
-        import comtypes  # noqa: F401  (import 시 이 스레드의 COM 초기화)
-        import comtypes.client
-
-        try:
-            from comtypes.gen import UIAutomationClient as U
-        except ImportError:  # 개발 환경: 처음 한 번 형식 라이브러리에서 만든다 (실행 파일에는 미리 포함)
-            comtypes.client.GetModule("UIAutomationCore.dll")
-            from comtypes.gen import UIAutomationClient as U
-        _U = U
-        _uia = comtypes.client.CreateObject(U.CUIAutomation, interface=U.IUIAutomation)
+        _U, _uia = _new_client()
     return _U, _uia
 
 
@@ -77,8 +89,8 @@ def _selection(el, U):
     return pat.QueryInterface(U.IUIAutomationSelectionItemPattern)
 
 
-def list_tabs(hwnd: int) -> list[TabInfo]:
-    U, uia = _client()
+def list_tabs(hwnd: int, client=None) -> list[TabInfo]:
+    U, uia = client or _client()
     root = uia.ElementFromHandle(hwnd)
     is_item = uia.CreatePropertyCondition(U.UIA_ControlTypePropertyId, U.UIA_TabItemControlTypeId)
     # 탭 표시줄(Tab 컨트롤)을 먼저 찾고 그 안에서만 찾는다: 창 전체(웹 페이지 포함)를 뒤지면 느리다
@@ -103,8 +115,8 @@ def list_tabs(hwnd: int) -> list[TabInfo]:
     return tabs
 
 
-def _select(tab: TabInfo) -> None:
-    U, _ = _client()
+def _select(tab: TabInfo, client=None) -> None:
+    U, _ = client or _client()
     sel = _selection(tab.element, U)
     if sel is not None:
         sel.Select()
@@ -158,3 +170,83 @@ def capture_tab(hwnd: int, target: TabInfo, settle: float = 0.6, timeout: float 
                 log.warning("원래 탭으로 되돌리기 실패: %s", e)
         if was_iconic:
             win32.ShowWindow(hwnd, win32.SW_SHOWMINNOACTIVE)
+
+
+class TabPreviewer(threading.Thread):
+    """탭 목록 미리보기: 선택 화면 뒤에서 탭을 하나씩 바꿔 찍고, 끝나면(또는 멈추면) 원래 탭으로 되돌린다.
+
+    선택 화면이 화면 전체를 덮고 있어서 사용자는 브라우저가 탭을 넘기는 걸 보지 않는다.
+    Tk 화면이 멈추지 않게 별도 스레드에서 하고, 그 스레드 전용 COM(MTA)·UI Automation 객체를 쓴다.
+    찍은 그림은 on_image(index, name, image)로 넘긴다 (호출은 이 스레드에서 일어난다).
+    """
+
+    def __init__(self, hwnd: int, on_image, settle: float = 0.35, timeout: float = 1.5):
+        super().__init__(name="tab-preview", daemon=True)
+        self.hwnd = hwnd
+        self.on_image = on_image
+        self.settle = settle
+        self.timeout = timeout
+        self._halt = threading.Event()
+        self.restored = threading.Event()
+        self.error = ""
+
+    def stop(self):
+        self._halt.set()
+
+    def run(self):
+        import comtypes
+
+        comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+        try:
+            self._work()
+        except Exception as e:
+            self.error = str(e)
+            log.warning("탭 미리보기 중단: %s", e)
+        finally:
+            self.restored.set()
+            comtypes.CoUninitialize()
+
+    def _shot(self):
+        try:
+            return win32.capture_window(self.hwnd, fallback=False).image
+        except win32.CaptureError:
+            return None
+
+    def _work(self):
+        if not win32.IsWindow(self.hwnd) or win32.IsIconic(self.hwnd):
+            return
+        client = _new_client()
+        tabs = list_tabs(self.hwnd, client)
+        original = next((t for t in tabs if t.selected), None)
+        if original is not None:  # 지금 보이는 탭은 바꾸지 않고 바로
+            img = self._shot()
+            if img is not None:
+                self.on_image(original.index, original.name, img)
+        switched = False
+        try:
+            for tab in tabs:
+                if self._halt.is_set():
+                    break
+                if tab is original:
+                    continue
+                before = win32._text(self.hwnd)
+                _select(tab, client)
+                switched = True
+                if not (original is not None and same_name(original.name, tab.name)):
+                    deadline = time.time() + self.timeout
+                    while time.time() < deadline and not self._halt.is_set():
+                        if wait_condition(win32._text(self.hwnd), before, tab.name):
+                            break
+                        time.sleep(0.04)
+                if self._halt.is_set():
+                    break
+                time.sleep(self.settle)
+                img = self._shot()
+                if img is not None:
+                    self.on_image(tab.index, tab.name, img)
+        finally:
+            if switched and original is not None:
+                try:
+                    _select(original, client)
+                except Exception as e:
+                    log.warning("미리보기 뒤 원래 탭으로 되돌리기 실패: %s", e)

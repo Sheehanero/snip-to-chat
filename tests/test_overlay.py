@@ -24,6 +24,7 @@ class FakeWin:
     label: str
     rect: Rect
     minimized: bool = False
+    exe: str = ""
 
 
 @dataclass
@@ -45,7 +46,7 @@ def root():
 
 
 def make(root, cursor=(2500, 500), windows=None, active=None, hidden=(), thumbnail=None, start_in_list=False,
-         tabs_of=None):
+         tabs_of=None, tab_previews=None):
     from snip_to_chat.overlay import Overlay
 
     got = {"finish": None, "cancel": 0}
@@ -70,6 +71,7 @@ def make(root, cursor=(2500, 500), windows=None, active=None, hidden=(), thumbna
         thumbnail=thumbnail,
         start_in_list=start_in_list,
         tabs_of=tabs_of,
+        tab_previews=tab_previews,
     )
     root.update_idletasks()
     return ov, got
@@ -402,4 +404,92 @@ def test_thumbnails_pause_under_tab_list(root):
     before = len(ov._thumb_todo)
     ov._next_thumb()
     assert len(ov._thumb_todo) == before  # 탭 목록 위로 그리지 않음
+    ov.cancel()
+
+
+
+# ---------------------------------------------------------------- 탭 미리보기 · 브라우저 먼저
+class FakePreviewer:
+    def __init__(self, window, on_image, log):
+        self.stopped = False
+        self.joined = False
+        self.log = log
+        for t in TABS:  # 실제로는 뒤 스레드가 한 장씩 넘긴다
+            on_image(t.index, t.name, Image.new("RGB", (1600, 900), (10 * (t.index + 1), 0, 0)))
+
+    def stop(self):
+        self.stopped = True
+        self.log.append("stop")
+
+    def join(self, timeout=None):
+        self.joined = True
+        self.log.append("join")
+
+    def is_alive(self):
+        return False
+
+
+def open_tab_panel(root, log, cursor=(2500, 500)):
+    f, _ = tabs_of_factory()
+    made = []
+
+    def previews(w, on_image):
+        made.append(FakePreviewer(w, on_image, log))
+        return made[-1]
+
+    ov, got = make(root, cursor=cursor, windows=[BROWSER, HWP], tabs_of=f, tab_previews=previews)
+    ov._toggle_list()
+    e = center(card_of(ov, BROWSER))
+    ov._press(e)
+    ov._release(e)
+    ov._drain_previews()
+    return ov, got, made
+
+
+def test_tab_cards_get_preview_thumbnails(root):
+    log = []
+    ov, _, made = open_tab_panel(root, log)
+    assert len(made) == 1
+    assert all(r.thumb_id and r.image is not None for r in ov.tab_rows)
+    assert all(inside(r.rect.as_box(), RIGHT) for r in ov.tab_rows)
+    ov.cancel()
+    assert log[:2] == ["stop", "join"]  # 취소해도 원래 탭으로 돌아오게 멈추고 기다림
+
+
+def test_picking_previewed_tab_reuses_image_after_stopping(root):
+    log = []
+    ov, got, made = open_tab_panel(root, log)
+    row = ov.tab_rows[2]
+
+    def finish(sels):
+        log.append("finish")
+        got["finish"] = sels
+
+    ov.on_finish = finish
+    ov._press(center(row))
+    ov._release(center(row))
+    sel = got["finish"][0]
+    assert sel.kind == "tab" and sel.image is row.image  # 다시 찍지 않고 미리보기 그림 사용
+    assert log == ["stop", "join", "finish"]  # 원래 탭으로 돌아온 뒤에 첨부 처리
+
+
+def test_back_to_window_list_stops_previews(root):
+    log = []
+    ov, _, _ = open_tab_panel(root, log)
+    ov._toggle_list()  # 탭 목록 → 창 목록
+    assert ov.tab_window is None and log == ["stop", "join"]
+    ov.cancel()
+
+
+def test_window_list_puts_edge_and_chrome_first(root):
+    edge = FakeWin("Edge · 공직자통합메일", Rect(2100, 200, 2900, 800), exe="msedge.exe")
+    chrome = FakeWin("Chrome · 나라배움터", Rect(2000, 100, 3000, 900), exe="chrome.exe")
+    hwp = FakeWin("한글 · 보고서", Rect(0, 0, 900, 700), exe="hwp.exe")
+    edge_min = FakeWin("Edge · 최소화", Rect(-32000, -32000, -31840, -31972), minimized=True, exe="msedge.exe")
+    ov, _ = make(root, windows=[hwp, chrome, edge], hidden=[edge_min])
+    ov._toggle_list()
+    order = [c.entry.label for c in ov.cards]
+    assert order == ["Edge · 공직자통합메일", "Edge · 최소화", "Chrome · 나라배움터", "한글 · 보고서"]
+    first = ov.cards[0].rect
+    assert all(first.top <= c.rect.top for c in ov.cards) and first.left == min(c.rect.left for c in ov.cards)
     ov.cancel()
