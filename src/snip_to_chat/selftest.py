@@ -32,6 +32,13 @@ def run_selftest(settings: Settings, dpi: str) -> int:
     _p(f"[환경] {bits}비트 · DPI 인식 {dpi} · 키 입력 구조체 {'정상' if input_size == expected else '이상'}")
     for p in settings.problems:
         _p(f"  설정 문제: {p}")
+    try:
+        mons = win32.list_monitors()
+        report["monitors"] = [[m.left, m.top, m.right, m.bottom] for m in mons]
+        _p(f"[모니터] {len(mons)}대: " + " / ".join(f"{m.width}×{m.height} 위치({m.left},{m.top})" for m in mons))
+    except Exception as e:
+        report["monitors"] = {"error": str(e)}
+        _p(f"[모니터] 확인 실패: {e}")
 
     # 1. 단축키 등록
     _p("")

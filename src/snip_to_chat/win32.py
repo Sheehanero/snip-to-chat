@@ -129,6 +129,7 @@ RegisterClipboardFormatW = _fn(user32, "RegisterClipboardFormatW", wt.UINT, wt.L
 SendInput = _fn(user32, "SendInput", wt.UINT, wt.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
 GetAsyncKeyState = _fn(user32, "GetAsyncKeyState", wt.SHORT, ctypes.c_int)
 MessageBeep = _fn(user32, "MessageBeep", wt.BOOL, wt.UINT)
+GetCursorPos = _fn(user32, "GetCursorPos", wt.BOOL, ctypes.POINTER(wt.POINT))
 
 CreateCompatibleDC = _fn(gdi32, "CreateCompatibleDC", wt.HDC, wt.HDC)
 CreateCompatibleBitmap = _fn(gdi32, "CreateCompatibleBitmap", wt.HBITMAP, wt.HDC, ctypes.c_int, ctypes.c_int)
@@ -456,6 +457,24 @@ def grab_screen(rect: Rect | None = None) -> tuple[Image.Image, Rect]:
         shot = sct.grab(area)
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
         return img, Rect(area["left"], area["top"], area["left"] + area["width"], area["top"] + area["height"])
+
+
+def list_monitors() -> list[Rect]:
+    """모니터별 영역 (가상 화면 좌표, 물리 픽셀). 첫 번째가 주 모니터."""
+    import mss
+
+    with mss.mss() as sct:
+        mons = [
+            Rect(m["left"], m["top"], m["left"] + m["width"], m["top"] + m["height"]) for m in sct.monitors[1:]
+        ]
+    primary = [m for m in mons if m.left == 0 and m.top == 0]
+    return primary + [m for m in mons if m not in primary]
+
+
+def cursor_pos() -> tuple[int, int]:
+    pt = wt.POINT()
+    GetCursorPos(ctypes.byref(pt))
+    return pt.x, pt.y
 
 
 @dataclass

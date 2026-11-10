@@ -14,7 +14,7 @@ from typing import Callable, Sequence
 
 from PIL import Image, ImageTk
 
-from .geometry import Rect, hit_test, is_drag, rect_from_drag
+from .geometry import Rect, hit_test, is_drag, monitor_at, place_in, rect_from_drag
 from .imaging import dim
 
 ACCENT = "#378ADD"
@@ -41,10 +41,17 @@ class Overlay:
         on_finish: Callable[[list[Selection]], None],
         on_cancel: Callable[[], None],
         max_items: int = 20,
+        monitors: Sequence[Rect] = (),
+        cursor: tuple[int, int] | None = None,
     ):
         self.root = root
         self.shot = screenshot
         self.origin = origin
+        # 듀얼 모니터: 선택 화면은 모든 모니터를 덮지만, 안내 문구·담기 바·이름표는
+        # 마우스가 있는 모니터 안에만 둔다 (가상 화면 가운데에 두면 두 모니터 경계에 걸친다)
+        self.monitors = list(monitors) or [origin]
+        start = cursor or (origin.left + origin.width // 2, origin.top + origin.height // 2)
+        self.monitor = monitor_at(self.monitors, *start)
         self.windows = list(windows)
         self.on_finish = on_finish
         self.on_cancel = on_cancel
@@ -74,15 +81,12 @@ class Overlay:
         self.label_id = c.create_text(0, 0, anchor="nw", text="", font=FONT, fill="#111111", state="hidden")
         self.marks: list[int] = []
 
-        # 안내 문구 (커서가 있는 모니터 위쪽 가운데 대신, 가상 화면 위쪽 가운데)
         hint = "클릭: 창 전체   드래그: 영역   Shift 누른 채: 여러 장 담기   Enter: 첨부   Esc: 취소"
-        cx = origin.width // 2
         self.hint_bg = c.create_rectangle(0, 0, 0, 0, fill="#1f1f1f", outline="")
-        self.hint_id = c.create_text(cx, 22, text=hint, font=FONT, fill="#ffffff")
-        self._fit_bg(self.hint_bg, self.hint_id, pad=10)
-
+        self.hint_id = c.create_text(0, 0, text=hint, font=FONT, fill="#ffffff")
         self.tray_bg = c.create_rectangle(0, 0, 0, 0, fill="#ffffff", outline=ACCENT, width=2, state="hidden")
-        self.tray_id = c.create_text(cx, origin.height - 40, text="", font=FONT_BOLD, fill="#0C447C", state="hidden")
+        self.tray_id = c.create_text(0, 0, text="", font=FONT_BOLD, fill="#0C447C", state="hidden")
+        self._place_chrome()
 
         for seq, fn in (
             ("<Motion>", self._motion),
@@ -112,6 +116,22 @@ class Overlay:
         if not self.closed:
             self.top.focus_force()
 
+    def _place_chrome(self):
+        """안내 문구는 지금 모니터 위쪽 가운데, 담기 바는 아래쪽 가운데."""
+        m = self._local(self.monitor)
+        cx = (m.left + m.right) // 2
+        self.canvas.coords(self.hint_id, cx, m.top + 22)
+        self._fit_bg(self.hint_bg, self.hint_id, pad=10)
+        self.canvas.coords(self.tray_id, cx, m.bottom - 40)
+        if self.canvas.itemcget(self.tray_bg, "state") != "hidden":
+            self._fit_bg(self.tray_bg, self.tray_id, pad=14)
+
+    def _follow_cursor(self, x: int, y: int):
+        m = monitor_at(self.monitors, x, y)
+        if m != self.monitor:
+            self.monitor = m
+            self._place_chrome()
+
     # ------------------------------------------------------------ 그리기
     def _fit_bg(self, bg_id, text_id, pad=6):
         x0, y0, x1, y1 = self.canvas.bbox(text_id)
@@ -131,8 +151,11 @@ class Overlay:
         c.coords(self.outline_id, local.left + 1, local.top + 1, local.right - 1, local.bottom - 1)
         c.itemconfigure(self.outline_id, state="normal")
         c.itemconfigure(self.label_id, text=label, state="normal")
-        ly = local.top - 30 if local.top >= 34 else local.top + 8
-        lx = max(4, min(local.left, self.origin.width - 420))
+        # 이름표는 상자 왼쪽 위가 있는 모니터 안에 둔다 (모니터 경계에 걸치지 않게)
+        mon = self._local(monitor_at(self.monitors, r.left, r.top))
+        ly = local.top - 30 if local.top - mon.top >= 34 else local.top + 8
+        x0, _, x1, _ = c.bbox(self.label_id)
+        lx = place_in(mon, (x1 - x0) + 16, local.left)
         c.coords(self.label_id, lx + 8, ly + 4)
         self._fit_bg(self.label_bg, self.label_id)
         c.itemconfigure(self.label_bg, state="normal")
@@ -174,6 +197,7 @@ class Overlay:
         if self.press is not None:
             return
         x, y = self._screen(e)
+        self._follow_cursor(x, y)
         w = hit_test(self.windows, x, y)
         if w is self.hovered:
             return

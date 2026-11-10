@@ -18,7 +18,7 @@ from PIL import Image
 from . import APP_NAME, __version__, win32
 from .config import MAX_IMAGES_PER_MESSAGE, Settings
 from .diag import Diagnostics, summarize
-from .geometry import Rect
+from .geometry import Rect, monitor_at
 from .imaging import to_mcp_image_content
 from .mcp_server import McpServer, Tool, ToolFailure, text
 from .overlay import Overlay, Selection
@@ -144,8 +144,13 @@ class App:
             return
         shot, origin = win32.grab_screen()
         windows = win32.list_windows(exclude_pid=self.pid)
-
-        self.note(f"선택 화면 열림: 화면 {origin.width}×{origin.height}, 고를 수 있는 창 {len(windows)}개")
+        monitors = win32.list_monitors()
+        cursor = win32.cursor_pos()
+        self.note(
+            f"선택 화면 열림: 모니터 {len(monitors)}대 "
+            + " / ".join(f"{m.width}×{m.height}@({m.left},{m.top})" for m in monitors)
+            + f", 고를 수 있는 창 {len(windows)}개"
+        )
 
         def finished(selections: list[Selection]):
             self.overlay = None
@@ -158,7 +163,8 @@ class App:
             self.note("선택 화면 취소")
 
         self.overlay = Overlay(
-            self.root, shot, origin, windows, finished, cancelled, max_items=MAX_IMAGES_PER_MESSAGE
+            self.root, shot, origin, windows, finished, cancelled,
+            max_items=MAX_IMAGES_PER_MESSAGE, monitors=monitors, cursor=cursor,
         )
 
     def _capture_selection(self, sel: Selection, shot: Image.Image, origin: Rect) -> Captured | None:
@@ -256,8 +262,14 @@ class App:
             lbl = tk.Label(t, text=message, font=("Malgun Gothic", 11), bg="#1f1f1f", fg="#ffffff", padx=16, pady=10)
             lbl.pack()
             t.update_idletasks()
-            sw, sh = t.winfo_screenwidth(), t.winfo_screenheight()
-            t.geometry(f"+{sw - t.winfo_width() - 24}+{sh - t.winfo_height() - 72}")
+            # 마우스가 있는 모니터의 오른쪽 아래에 띄운다 (주 모니터 고정이 아니라)
+            try:
+                m = monitor_at(win32.list_monitors(), *win32.cursor_pos())
+                x, y = m.right - t.winfo_width() - 24, m.bottom - t.winfo_height() - 72
+            except Exception:
+                x = t.winfo_screenwidth() - t.winfo_width() - 24
+                y = t.winfo_screenheight() - t.winfo_height() - 72
+            t.geometry(f"+{x}+{y}")
             t.after(ms, t.destroy)
         except tk.TclError:
             pass

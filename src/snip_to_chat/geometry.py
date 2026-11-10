@@ -68,6 +68,30 @@ def hit_test(items: Sequence[T], x: int, y: int, rect_of=lambda w: w.rect) -> T 
     return None
 
 
+def monitor_at(monitors: Sequence[Rect], x: int, y: int) -> Rect:
+    """(x, y)가 있는 모니터. 모니터 사이 빈 공간이면 가장 가까운 모니터.
+
+    모니터 높이·위치가 서로 다르면 가상 화면 안에 어느 모니터에도 속하지 않는 빈 영역이 생긴다.
+    """
+    if not monitors:
+        raise ValueError("모니터 목록이 비어 있어요")
+    for m in monitors:
+        if m.contains(x, y):
+            return m
+
+    def dist2(m: Rect) -> int:
+        dx = max(m.left - x, 0, x - (m.right - 1))
+        dy = max(m.top - y, 0, y - (m.bottom - 1))
+        return dx * dx + dy * dy
+
+    return min(monitors, key=dist2)
+
+
+def place_in(monitor: Rect, width: int, x: int) -> int:
+    """폭 width인 상자의 왼쪽 x를 모니터 안으로 밀어 넣는다 (모니터 경계를 걸치지 않게)."""
+    return max(monitor.left + 4, min(x, monitor.right - width - 4))
+
+
 def to_local(rect: Rect, origin_left: int, origin_top: int) -> Rect:
     """가상 화면 좌표 → 오버레이 캔버스 좌표 (캔버스 (0,0) = 가상 화면 왼쪽 위)."""
     return rect.offset(-origin_left, -origin_top)
