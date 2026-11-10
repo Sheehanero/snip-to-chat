@@ -107,9 +107,25 @@ def main(argv: list[str] | None = None) -> int:
     else:
         hidden = False
 
+    first = win32.acquire_single_instance()
+    if not first:
+        if mode == "standalone":
+            # 시험 모드를 두 번 켜면 두 번째는 단축키를 못 잡고 조용히 놀게 된다 → 바로 알리고 끝낸다
+            log.warning("이미 실행 중이라 시험 모드를 끝냄")
+            print(f"{APP_NAME}이 이미 실행 중이에요 (Claude에 설치한 것이나 다른 시험 창).")
+            print("그쪽 창을 닫고 다시 실행하세요.")
+            if _stdin_is_console():
+                try:
+                    input("Enter를 누르면 닫혀요...")
+                except EOFError:
+                    pass
+            return 3
+        # MCP 모드는 Claude가 띄운 것이라 끝내면 안 된다: 도구는 계속 제공하고 단축키만 못 잡을 수 있다
+        log.warning("다른 snip-to-chat이 이미 실행 중 (단축키 등록이 실패할 수 있음)")
+
     dpi = win32.set_dpi_awareness()
     diag = Diagnostics(mode)
-    diag.set("settings_problems", list(settings.problems))
+    diag.set("settings_problems", list(settings.problems) + ([] if first else ["다른 snip-to-chat이 이미 실행 중"]))
     diag.set("env", {"dpi_awareness": dpi, "console_hidden": hidden, "auto_paste": settings.auto_paste})
     log.info("시작: %s 모드, 단축키 %s / %s", mode, settings.select_hotkey.text, settings.active_hotkey.text)
 

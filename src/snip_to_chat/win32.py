@@ -16,10 +16,14 @@ from dataclasses import dataclass
 if sys.platform != "win32":  # pragma: no cover
     raise ImportError("snip_to_chat.win32는 Windows 전용이에요")
 
+import logging
+
 from PIL import Image
 
 from .geometry import Rect
 from .imaging import is_blank, to_dib_bytes, to_png_bytes
+
+_log = logging.getLogger(__name__)
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
@@ -692,15 +696,22 @@ class HotkeyThread(threading.Thread):
         PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_NOREMOVE)  # 메시지 큐 생성
         registered = []
         for hk_id, name, hk in self.bindings:
-            ok = RegisterHotKey(None, hk_id, hk.modifiers | MOD_NOREPEAT, hk.vk)
-            err = ctypes.get_last_error()
+            # Claude가 서버를 다시 띄울 때 이전 프로세스가 아직 단축키를 놓지 않았을 수 있어 잠깐 재시도한다
+            for attempt in range(6):
+                ok = RegisterHotKey(None, hk_id, hk.modifiers | MOD_NOREPEAT, hk.vk)
+                err = ctypes.get_last_error()
+                if ok or err != 1409:
+                    break
+                time.sleep(0.5)
             if ok:
                 registered.append(hk_id)
                 self.diag.hotkey(name, spec=hk.text, registered=True)
+                _log.info("단축키 등록: %s %s", name, hk.text)
             else:
                 reason = "다른 프로그램이 이미 쓰는 조합" if err == 1409 else f"Windows 오류 {err}"
                 self.diag.hotkey(name, spec=hk.text, registered=False, error=reason)
                 self.diag.error(f"단축키 {hk.text} 등록 실패: {reason}")
+                _log.warning("단축키 등록 실패: %s %s (%s)", name, hk.text, reason)
         self.diag.set("hotkey_thread_alive", True)
         self.ready.set()
         try:
@@ -729,6 +740,24 @@ def try_register(hk) -> tuple[bool, str]:
         UnregisterHotKey(None, 0xBEEF)
         return True, "등록 가능"
     return False, "다른 프로그램이 이미 쓰는 조합" if err == 1409 else f"Windows 오류 {err}"
+
+
+_instance_mutex = None
+
+
+def acquire_single_instance(name: str = "Local\\snip-to-chat-hotkeys") -> bool:
+    """이 사용자 세션에서 처음 실행된 것이면 True. 이미 다른 snip-to-chat이 떠 있으면 False.
+
+    핸들은 프로세스가 끝날 때까지 쥐고 있어야 하므로 모듈 변수에 둔다.
+    """
+    global _instance_mutex
+    CreateMutexW = _fn(kernel32, "CreateMutexW", wt.HANDLE, ctypes.c_void_p, wt.BOOL, wt.LPCWSTR)
+    h = CreateMutexW(None, False, name)
+    err = ctypes.get_last_error()
+    if not h:
+        return True  # 확인할 수 없으면 막지 않는다
+    _instance_mutex = h
+    return err != 183  # ERROR_ALREADY_EXISTS
 
 
 def input_struct_size() -> int:
