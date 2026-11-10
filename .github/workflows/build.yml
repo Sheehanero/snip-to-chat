@@ -52,12 +52,17 @@ jobs:
           python-version: "3.12"
       - name: 의존성 설치
         run: python -m pip install -r requirements-dev.txt
+      - name: UI Automation 형식 라이브러리 미리 만들기 (탭 읽기용, 실행 파일에 포함)
+        run: python -c "import comtypes.client as c; c.GetModule('UIAutomationCore.dll'); from comtypes.gen import UIAutomationClient; print('UIAutomationClient OK')"
       - name: 단위 시험
-        run: python -m pytest -q
+        run: python -m pytest -q -s -k "not browser_tabs"
+      - name: 실제 브라우저 탭 캡처 시험
+        run: python -m pytest -q -s tests/test_browser_tabs_win.py
       - name: 실행 파일 만들기 (PyInstaller, 폴더형)
         run: >-
           pyinstaller --noconfirm --clean --onedir --console
           --name snip-to-chat --paths src --collect-submodules snip_to_chat
+          --collect-submodules comtypes --hidden-import comtypes.gen.UIAutomationClient
           packaging/entry.py
       - name: 실행 확인
         run: dist\snip-to-chat\snip-to-chat.exe --version
