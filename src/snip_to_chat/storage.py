@@ -105,5 +105,20 @@ class CaptureStore:
         return removed
 
 
+USER_KINDS = ("window", "region", "active")
+
+
+def recent_capture_files(directory: Path, count: int) -> list[Path]:
+    """사용자가 단축키로 찍은 캡처 파일을 최신순으로 (자체 점검·도구로 찍은 것은 뺀다)."""
+    if not directory.is_dir():
+        return []
+    files = [
+        p for p in directory.glob("*.png")
+        if p.is_file() and any(p.stem.endswith("-" + k) or f"-{k}-" in p.stem for k in USER_KINDS)
+    ]
+    files.sort(key=lambda p: (p.stat().st_mtime, p.name), reverse=True)
+    return files[:count]
+
+
 def _safe_kind(kind: str) -> str:
     return "".join(c for c in kind if c.isalnum() or c in "-_")[:20] or "capture"

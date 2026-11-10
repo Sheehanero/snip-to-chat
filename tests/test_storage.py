@@ -91,6 +91,20 @@ def test_prune_keeps_newest(tmp_path):
     assert left == sorted(p.name for p in paths[-2:])
 
 
+def test_recent_capture_files_newest_user_captures_only(tmp_path):
+    from snip_to_chat.storage import recent_capture_files
+
+    store = CaptureStore(tmp_path / "caps")
+    made = []
+    for i, kind in enumerate(["window", "selftest", "region", "tool", "active", "window"]):
+        p = store.save(Image.new("RGB", (2, 2)), kind, now=dt.datetime(2026, 1, 1, 0, 0, i)).path
+        os.utime(p, (2_000_000 + i, 2_000_000 + i))
+        made.append((kind, p))
+    got = recent_capture_files(tmp_path / "caps", 3)
+    assert [p for p in got] == [made[5][1], made[4][1], made[2][1]]  # 최신순, selftest·tool 제외
+    assert recent_capture_files(tmp_path / "없음", 3) == []
+
+
 def test_override_expands_user(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows는 HOME 대신 이것을 본다

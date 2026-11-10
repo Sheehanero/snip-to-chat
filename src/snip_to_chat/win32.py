@@ -762,22 +762,54 @@ def try_register(hk) -> tuple[bool, str]:
     return False, "다른 프로그램이 이미 쓰는 조합" if err == 1409 else f"Windows 오류 {err}"
 
 
-_instance_mutex = None
+CreateMutexW = _fn(kernel32, "CreateMutexW", wt.HANDLE, ctypes.c_void_p, wt.BOOL, wt.LPCWSTR)
+WaitForSingleObject = _fn(kernel32, "WaitForSingleObject", wt.DWORD, wt.HANDLE, wt.DWORD)
+ReleaseMutex = _fn(kernel32, "ReleaseMutex", wt.BOOL, wt.HANDLE)
+WAIT_OBJECT_0, WAIT_ABANDONED, WAIT_TIMEOUT = 0x0, 0x80, 0x102
+LEADER_MUTEX = "Local\\snip-to-chat-leader"
 
 
-def acquire_single_instance(name: str = "Local\\snip-to-chat-hotkeys") -> bool:
-    """이 사용자 세션에서 처음 실행된 것이면 True. 이미 다른 snip-to-chat이 떠 있으면 False.
+class Leadership(threading.Thread):
+    """단축키·알림 영역 아이콘을 맡을 프로세스를 하나만 고른다.
 
-    핸들은 프로세스가 끝날 때까지 쥐고 있어야 하므로 모듈 변수에 둔다.
+    Claude 데스크톱은 이 서버를 동시에 여러 개 띄울 수 있다(실제 PC에서 1초 간격으로 2개 확인).
+    뮤텍스를 '소유'한 프로세스 하나만 맡고, 나머지는 기다리다가 맡던 쪽이 꺼지면
+    (뮤텍스가 버려지면) 이어받는다. 소유권은 기다린 스레드에 붙으므로 이 스레드가 끝까지 쥔다.
     """
-    global _instance_mutex
-    CreateMutexW = _fn(kernel32, "CreateMutexW", wt.HANDLE, ctypes.c_void_p, wt.BOOL, wt.LPCWSTR)
+
+    def __init__(self, on_lead, name: str = LEADER_MUTEX):
+        super().__init__(name="leadership", daemon=True)
+        self.on_lead = on_lead
+        self.handle = CreateMutexW(None, False, name)
+        self.is_leader = False
+        self._stop = threading.Event()
+
+    def run(self):
+        if not self.handle:  # 뮤텍스를 못 만들면 막지 않고 바로 맡는다
+            self.is_leader = True
+            self.on_lead()
+            self._stop.wait()
+            return
+        while not self._stop.is_set():
+            r = WaitForSingleObject(self.handle, 500)
+            if r in (WAIT_OBJECT_0, WAIT_ABANDONED):
+                self.is_leader = True
+                _log.info("단축키·아이콘 담당 시작%s", " (앞서 맡던 프로세스가 꺼져서 이어받음)" if r == WAIT_ABANDONED else "")
+                self.on_lead()
+                self._stop.wait()
+                ReleaseMutex(self.handle)
+                return
+
+    def stop(self):
+        self._stop.set()
+
+
+def try_lead_now(name: str = LEADER_MUTEX) -> bool:
+    """시험 모드용: 지금 바로 맡을 수 있으면 True (호출한 스레드가 프로세스 끝까지 소유)."""
     h = CreateMutexW(None, False, name)
-    err = ctypes.get_last_error()
     if not h:
-        return True  # 확인할 수 없으면 막지 않는다
-    _instance_mutex = h
-    return err != 183  # ERROR_ALREADY_EXISTS
+        return True
+    return WaitForSingleObject(h, 0) in (WAIT_OBJECT_0, WAIT_ABANDONED)
 
 
 def input_struct_size() -> int:

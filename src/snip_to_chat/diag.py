@@ -91,6 +91,9 @@ def summarize(snap: dict[str, Any]) -> str:
     up = snap.get("uptime_seconds", 0)
     lines.append(f"실행 시간: {up // 3600}시간 {(up % 3600) // 60}분 {up % 60}초")
 
+    if snap.get("role"):
+        lines.append(f"역할: {snap['role']}")
+
     lines.append("")
     lines.append("[1] 단축키 감시")
     lines.append(f"  감시 스레드: {'살아 있음' if snap.get('hotkey_thread_alive') else '멈춤'}")

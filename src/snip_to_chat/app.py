@@ -22,7 +22,7 @@ from .geometry import Rect, monitor_at
 from .imaging import to_mcp_image_content
 from .mcp_server import McpServer, Tool, ToolFailure, text
 from .overlay import Overlay, Selection
-from .storage import CaptureStore, resolve_capture_dir
+from .storage import CaptureStore, recent_capture_files, resolve_capture_dir
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +73,46 @@ class App:
         except (ValueError, tk.TclError):
             self.owner_hwnd = self.root.winfo_id()
 
+        self.hotkeys = None
+        self.tray = None
+        self.leadership = None
+        if self.mode == "standalone":
+            # 시험 모드는 시작 전에 이미 담당을 확보했다 (__main__의 try_lead_now)
+            self.diag.set("role", "담당")
+            self._start_lead_duties()
+        else:
+            # Claude가 여러 개 띄울 수 있으니 하나만 단축키·아이콘을 맡고 나머지는 대기
+            self.diag.set("role", "대기 (다른 snip-to-chat이 단축키·아이콘 담당)")
+            self.leadership = win32.Leadership(on_lead=lambda: self.events.put(("lead", None)))
+            self.leadership.start()
+
+        if self.mode == "mcp":
+            server = McpServer(APP_NAME, __version__, self.tools(), INSTRUCTIONS)
+            t = threading.Thread(target=self._serve, args=(server,), name="mcp", daemon=True)
+            t.start()
+
+        self.root.after(30, self._pump)
+        try:
+            self.root.mainloop()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if self.hotkeys is not None:
+                self.hotkeys.stop()
+                self.hotkeys.join(timeout=2)
+            if self.tray is not None:
+                self.tray.stop()
+                self.tray.join(timeout=2)
+            if self.leadership is not None:
+                self.leadership.stop()
+                self.leadership.join(timeout=2)
+        return 0
+
+    def _start_lead_duties(self):
+        """단축키 감시와 알림 영역 아이콘을 켠다 (담당 프로세스 하나만)."""
+        if self.hotkeys is not None:
+            return
+        self.diag.set("role", "담당")
         s = self.settings
         self.hotkeys = win32.HotkeyThread(
             [(HOTKEY_SELECT, "선택 화면", s.select_hotkey), (HOTKEY_ACTIVE, "활성 창", s.active_hotkey)],
@@ -82,7 +122,6 @@ class App:
         self.hotkeys.start()
         self.hotkeys.ready.wait(5)
 
-        self.tray = None
         try:
             from .tray import CMD_ACTIVE, CMD_FOLDER, CMD_QUIT, CMD_SELECT, TrayIcon
 
@@ -105,24 +144,6 @@ class App:
             log.warning("알림 영역 아이콘 없이 계속: %s", e)
             self.diag.set("tray", {"shown": False, "error": str(e)})
 
-        if self.mode == "mcp":
-            server = McpServer(APP_NAME, __version__, self.tools(), INSTRUCTIONS)
-            t = threading.Thread(target=self._serve, args=(server,), name="mcp", daemon=True)
-            t.start()
-
-        self.root.after(30, self._pump)
-        try:
-            self.root.mainloop()
-        except KeyboardInterrupt:
-            pass
-        finally:
-            self.hotkeys.stop()
-            self.hotkeys.join(timeout=2)
-            if self.tray is not None:
-                self.tray.stop()
-                self.tray.join(timeout=2)
-        return 0
-
     def _serve(self, server: McpServer):
         try:
             server.serve(sys.stdin.buffer, self.stdout)
@@ -140,6 +161,8 @@ class App:
                 if kind == "quit":
                     self.root.quit()
                     return
+                if kind == "lead":
+                    self._safe(self._start_lead_duties)
                 if kind == "hotkey" and arg == HOTKEY_SELECT:
                     self.note(f"단축키 {self.settings.select_hotkey.text}: 선택 화면")
                     self._safe(self.open_overlay)
@@ -389,12 +412,23 @@ class App:
         count = max(1, min(5, count))
         with self.recent_lock:
             items = list(self.recent)[:count]
-        if not items:
+        if items:
+            content = []
+            for it in items:
+                content.append(text(f"{it['at']} · {it['label']} · {it['method']}"))
+                content.append(to_mcp_image_content(it["image"]))
+            return content
+        # 단축키를 맡은 게 다른 프로세스면 이 프로세스 메모리에는 없다 → 저장 폴더에서 읽는다
+        files = recent_capture_files(self.store.directory, count)
+        if not files:
             raise ToolFailure("아직 단축키로 찍은 캡처가 없어요")
         content = []
-        for it in items:
-            content.append(text(f"{it['at']} · {it['label']} · {it['method']}"))
-            content.append(to_mcp_image_content(it["image"]))
+        for p in files:
+            with Image.open(p) as im:
+                img = im.convert("RGB")
+            stamp = time.strftime("%H:%M:%S", time.localtime(p.stat().st_mtime))
+            content.append(text(f"{stamp} · {p.name}"))
+            content.append(to_mcp_image_content(img))
         return content
 
     def _tool_diag(self, args):
