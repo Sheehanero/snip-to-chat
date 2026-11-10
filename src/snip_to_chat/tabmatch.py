@@ -18,20 +18,26 @@ def _norm(s: str) -> str:
 def title_shows_tab(window_title: str, tab_name: str) -> bool:
     """창 제목이 그 탭으로 바뀌었는지.
 
-    크롬 창 제목은 '<탭 제목> - Chrome', 엣지는 '<탭 제목> - 개인 - Microsoft Edge' 같은 꼴이고,
-    탭 이름에는 ' - 오디오 재생 중' 같은 꼬리가 붙기도 하며, 긴 제목은 서로 다르게 잘린다.
-    그래서 탭 이름의 앞부분이 창 제목의 앞부분과 맞는지로 본다.
+    크롬 창 제목은 '<탭 제목> - Chrome', 엣지는 '<탭 제목> 및 페이지 1개 더 - 개인 - Microsoft Edge'
+    같은 꼴이다. 탭 이름에는 ' - Memory usage - 19.1 MB'(엣지), ' - 오디오 재생 중' 같은 꼬리가
+    붙기도 하고, 긴 제목은 서로 다르게 잘린다. 그래서 꼬리를 뗀 탭 제목이 창 제목 맨 앞에
+    단어 단위로 있는지 본다.
     """
-    w, t = _norm(window_title), _norm(tab_name)
-    if not w or not t:
+    w = _norm(window_title)
+    if not w or not _norm(tab_name):
         return False
+    t = _norm(_STATUS_TAIL.sub("", tab_name or "")) or _norm(tab_name)
     if len(t) > 24:
-        if w.startswith(t[:24]):  # 긴 제목은 서로 다르게 잘려도 앞 24자는 같다
-            return True
-    elif w == t or w.startswith(t + " - "):  # 짧은 제목은 통째로 맞고 바로 뒤가 ' - 브라우저'
+        return w.startswith(t[:24])  # 긴 제목은 서로 다르게 잘려도 앞 24자는 같다
+    if _word_prefix(w, t):
         return True
-    main = t.split(" - ")[0]  # 탭 이름 꼬리(' - 오디오 재생 중' 등)를 뗀 본 제목
-    return bool(main) and w.startswith(main + " - ")
+    main = t.split(" - ")[0]  # 모르는 꼬리가 붙은 경우: 본 제목 + ' - 브라우저'
+    return bool(main) and main != t and w.startswith(main + " - ")
+
+
+def _word_prefix(w: str, t: str) -> bool:
+    """w가 t로 시작하고 거기서 단어가 끝나는지 ('REDTAB' 은 'REDTABX'의 앞이 아님)."""
+    return w.startswith(t) and (len(w) == len(t) or not w[len(t)].isalnum())
 
 
 def wait_condition(now_title: str, before_title: str, tab_name: str) -> bool:
@@ -45,6 +51,18 @@ def wait_condition(now_title: str, before_title: str, tab_name: str) -> bool:
 
 def same_name(a: str, b: str) -> bool:
     return _norm(a) == _norm(b)
+
+
+_STATUS_TAIL = re.compile(
+    r"\s+-\s+(memory usage|메모리 사용량)\b.*$|\s+-\s+(audio playing|오디오 재생 중|일시중지됨|paused)\s*$",
+    re.IGNORECASE,
+)
+
+
+def display_name(tab_name: str) -> str:
+    """목록에 보여줄 탭 이름: 엣지가 붙이는 ' - Memory usage - 19.1 MB' 같은 꼬리를 뗀다."""
+    name = _STATUS_TAIL.sub("", tab_name or "").strip()
+    return name or "(제목 없는 탭)"
 
 
 def pick_tab(tabs: list, index: int, name: str):

@@ -67,7 +67,9 @@ jobs:
           --collect-submodules comtypes --hidden-import comtypes.gen.UIAutomationClient
           packaging/entry.py
       - name: 실행 확인
-        run: dist\snip-to-chat\snip-to-chat.exe --version
+        run: |
+          dist\snip-to-chat\snip-to-chat.exe --version
+          dist\snip-to-chat\snip-to-chat.exe --check-uia
       - name: MCP 연결 시험 (Claude 데스크톱처럼 띄우고 종료까지)
         run: python scripts/smoke_mcp.py dist\snip-to-chat\snip-to-chat.exe
       - name: 자체 점검 (참고용, 실패해도 계속)

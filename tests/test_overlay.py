@@ -44,7 +44,8 @@ def root():
     r.destroy()
 
 
-def make(root, cursor=(2500, 500), windows=None, active=None, hidden=(), thumbnail=None, start_in_list=False):
+def make(root, cursor=(2500, 500), windows=None, active=None, hidden=(), thumbnail=None, start_in_list=False,
+         tabs_of=None):
     from snip_to_chat.overlay import Overlay
 
     got = {"finish": None, "cancel": 0}
@@ -68,6 +69,7 @@ def make(root, cursor=(2500, 500), windows=None, active=None, hidden=(), thumbna
         hidden_windows=hidden,
         thumbnail=thumbnail,
         start_in_list=start_in_list,
+        tabs_of=tabs_of,
     )
     root.update_idletasks()
     return ov, got
@@ -296,4 +298,108 @@ def test_list_has_no_region_drag(root):
     ov._drag(Ev(1700, 1000))
     ov._release(Ev(1700, 1000))
     assert got["finish"] is None and not ov.bag
+    ov.cancel()
+
+
+# ---------------------------------------------------------------- 탭 목록 (브라우저 창 → 탭)
+@dataclass
+class FakeTab:
+    name: str
+    selected: bool
+    index: int
+
+
+BROWSER = FakeWin("Chrome · 나라배움터", Rect(2000, 100, 3000, 900))
+HWP = FakeWin("한글 · 보고서", Rect(0, 0, 900, 700))
+TABS = [FakeTab("나라배움터 > 나의 강의실", True, 0), FakeTab("공직자통합메일", False, 1),
+        FakeTab("Gemini - Memory usage - 19.1 MB", False, 2)]
+
+
+def tabs_of_factory(result=TABS, boom=False):
+    calls = []
+
+    def f(w):
+        calls.append(w.label)
+        if boom:
+            raise RuntimeError("UIA 실패")
+        return result if w is BROWSER else None
+
+    return f, calls
+
+
+def card_of(ov, entry):
+    return next(c for c in ov.cards if c.entry is entry)
+
+
+def test_browser_card_opens_tab_list_then_background_tab(root):
+    f, calls = tabs_of_factory()
+    ov, got = make(root, cursor=(2500, 500), windows=[BROWSER, HWP], tabs_of=f)
+    ov._toggle_list()
+    e = center(card_of(ov, BROWSER))
+    ov._press(e)
+    ov._release(e)
+    assert calls == [BROWSER.label] and ov.tab_window is BROWSER and got["finish"] is None
+    assert [r.tab.name for r in ov.tab_rows] == [t.name for t in TABS]
+    assert all(inside(r.rect.as_box(), RIGHT) for r in ov.tab_rows)
+    row = ov.tab_rows[1]
+    ov._press(center(row))
+    ov._release(center(row))
+    sel = got["finish"][0]
+    assert sel.kind == "tab" and sel.tab is TABS[1] and sel.window is BROWSER
+    assert sel.label == "Chrome 탭 · 공직자통합메일"
+
+
+def test_tab_list_shift_collect_then_back_to_windows(root):
+    f, _ = tabs_of_factory()
+    ov, got = make(root, cursor=(500, 500), windows=[BROWSER, HWP], tabs_of=f)
+    ov._toggle_list()
+    e = center(card_of(ov, BROWSER))
+    ov._press(e)
+    ov._release(e)
+    for row in ov.tab_rows[1:]:
+        c = center(row)
+        ov._press(Ev(c.x, c.y, 0x0001))
+        ov._release(Ev(c.x, c.y, 0x0001))
+    assert len(ov.bag) == 2 and all(r.badge_ids for r in ov.tab_rows[1:])
+    assert "Memory usage" not in ov.bag[1].label  # 엣지 꼬리는 떼고 보여줌
+    ov._toggle_list()  # Tab → 창 목록으로 (선택 화면으로 가는 게 아님)
+    assert ov.list_mode and ov.tab_window is None and card_of(ov, BROWSER).badge_ids
+    e = center(card_of(ov, HWP))
+    ov._press(e)
+    ov._release(e)
+    assert [s.kind for s in got["finish"]] == ["tab", "tab", "window"]
+
+
+def test_single_tab_or_failure_attaches_window_directly(root):
+    for f in (tabs_of_factory(result=[FakeTab("하나", True, 0)])[0], tabs_of_factory(boom=True)[0]):
+        ov, got = make(root, cursor=(500, 500), windows=[BROWSER, HWP], tabs_of=f)
+        ov._toggle_list()
+        e = center(card_of(ov, BROWSER))
+        ov._press(e)
+        ov._release(e)
+        assert got["finish"][0].kind == "window" and got["finish"][0].window is BROWSER
+
+
+def test_shift_on_browser_card_takes_window_without_tab_list(root):
+    f, calls = tabs_of_factory()
+    ov, got = make(root, cursor=(500, 500), windows=[BROWSER, HWP], tabs_of=f)
+    ov._toggle_list()
+    c = center(card_of(ov, BROWSER))
+    ov._press(Ev(c.x, c.y, 0x0001))
+    ov._release(Ev(c.x, c.y, 0x0001))
+    assert calls == [] and ov.tab_window is None and ov.bag[0].kind == "window"
+    ov.cancel()
+
+
+def test_thumbnails_pause_under_tab_list(root):
+    f, _ = tabs_of_factory()
+    ov, _ = make(root, cursor=(500, 500), windows=[BROWSER, HWP], tabs_of=f,
+                 thumbnail=lambda w: Image.new("RGB", (100, 60), (1, 2, 3)))
+    ov._toggle_list()
+    e = center(card_of(ov, BROWSER))
+    ov._press(e)
+    ov._release(e)
+    before = len(ov._thumb_todo)
+    ov._next_thumb()
+    assert len(ov._thumb_todo) == before  # 탭 목록 위로 그리지 않음
     ov.cancel()

@@ -210,6 +210,23 @@ class App:
     def open_list(self):
         self.open_overlay(start_in_list=True)
 
+    def _tabs_of(self, w):
+        """창 목록에서 브라우저 창을 눌렀을 때 탭 목록. 브라우저가 아니거나 못 읽으면 None."""
+        from .tabmatch import is_browser
+
+        if not is_browser(getattr(w, "exe", "")):
+            return None
+        try:
+            from . import browser_tabs
+
+            tabs = browser_tabs.list_tabs(w.hwnd)
+            self.note(f"탭 목록: {w.label} · {len(tabs)}개")
+            return tabs
+        except Exception as e:
+            log.warning("탭 목록 읽기 실패(%s): %s", getattr(w, "label", "?"), e)
+            self.diag.error(f"탭 목록 읽기 실패: {e}")
+            return None
+
     def _thumbnail(self, w):
         """창 목록 썸네일: 가려진 창도 PrintWindow로 내용 그대로. 최소화된 창은 목록에서 고를 때 찍는다."""
         if getattr(w, "minimized", False):
@@ -249,6 +266,7 @@ class App:
             self.root, shot, origin, windows, finished, cancelled,
             max_items=MAX_IMAGES_PER_MESSAGE, monitors=monitors, cursor=cursor, active=active,
             hidden_windows=hidden, thumbnail=self._thumbnail, start_in_list=start_in_list,
+            tabs_of=self._tabs_of,
         )
 
     def _capture_selection(self, sel: Selection, shot: Image.Image, origin: Rect) -> Captured | None:
@@ -259,6 +277,17 @@ class App:
             img = shot.crop(box.as_box())
             self.diag.capture("region", "screen", img.size, False)
             return Captured(img, "region", sel.label, "screen")
+        if sel.kind == "tab":
+            try:
+                from . import browser_tabs
+
+                res = browser_tabs.capture_tab(sel.window.hwnd, sel.tab)
+            except Exception as e:
+                self.diag.error(f"탭 캡처 실패({sel.label}): {e}")
+                self.toast(f"탭을 찍지 못했어요: {e}")
+                return None
+            self.diag.capture("tab", res.method, res.image.size, res.blank_fallback)
+            return Captured(res.image, "tab", sel.label, res.method)
         try:
             if getattr(sel.window, "minimized", False) or win32.IsIconic(sel.window.hwnd):
                 res = win32.capture_minimized(sel.window.hwnd)  # 잠깐 펼쳐서 찍고 다시 내림

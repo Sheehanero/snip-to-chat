@@ -105,7 +105,7 @@ class CaptureStore:
         return removed
 
 
-USER_KINDS = ("window", "region", "active")
+USER_KINDS = ("window", "region", "active", "tab")
 
 
 def recent_capture_files(directory: Path, count: int) -> list[Path]:

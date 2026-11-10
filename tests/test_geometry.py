@@ -11,6 +11,7 @@ from snip_to_chat.geometry import (
     monitor_at,
     place_in,
     rect_from_drag,
+    rows_layout,
     to_local,
 )
 
@@ -135,6 +136,23 @@ def test_grid_empty_cases():
     assert grid_layout(0, Rect(0, 0, 100, 100)) == []
     assert grid_layout(5, Rect(0, 0, 0, 0)) == []
     assert grid_layout(5, Rect(0, 0, 1000, 50)) == []  # 카드 한 장도 안 들어가는 높이
+
+
+@pytest.mark.parametrize("n", [1, 2, 18, 19, 40, 60])
+def test_rows_layout_fits_and_orders_top_to_bottom(n):
+    area = Rect(28, 120, 1892, 1000)
+    rows = rows_layout(n, area)
+    assert len(rows) == n
+    assert _no_overlap(rows) and _all_inside(rows, area)
+    if n >= 2:
+        assert rows[1].top > rows[0].top and rows[1].left == rows[0].left  # 아래로 먼저
+
+
+def test_rows_layout_truncates_and_empty():
+    area = Rect(0, 0, 500, 200)
+    rows = rows_layout(100, area)
+    assert 0 < len(rows) < 100 and _no_overlap(rows) and _all_inside(rows, area)
+    assert rows_layout(0, area) == [] and rows_layout(3, Rect(0, 0, 500, 20)) == []
 
 
 @pytest.mark.parametrize(

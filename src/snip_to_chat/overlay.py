@@ -4,6 +4,7 @@
 클릭 = 그 창 전체, 드래그 = 영역, Space = 지금 쓰던 창, Shift를 누른 채 고르면 여러 장 담기,
 Enter = 한 번에 첨부, Esc·오른쪽 클릭 = 취소.
 Tab = 창 목록: 다른 창에 가려졌거나 최소화된 창까지 썸네일로 보여주고 거기서 고른다.
+창 목록에서 크롬·엣지 창을 누르면 그 창의 탭 목록이 한 번 더 뜬다 (뒤쪽 탭도 고를 수 있다).
 """
 
 from __future__ import annotations
@@ -15,7 +16,9 @@ from typing import Callable, Sequence
 
 from PIL import Image, ImageTk
 
-from .geometry import Rect, fit_inside, grid_layout, hit_test, is_drag, monitor_at, place_in, rect_from_drag
+from .geometry import (
+    Rect, fit_inside, grid_layout, hit_test, is_drag, monitor_at, place_in, rect_from_drag, rows_layout,
+)
 from .imaging import dim
 
 ACCENT = "#378ADD"
@@ -37,10 +40,19 @@ class Card:
 
 @dataclass
 class Selection:
-    kind: str  # "window" | "region"
+    kind: str  # "window" | "region" | "tab"
     rect: Rect  # 가상 화면 좌표
     window: object | None  # win32.WindowInfo
     label: str
+    tab: object = None  # kind == "tab"일 때 browser_tabs.TabInfo
+
+
+@dataclass(eq=False)
+class TabRow:
+    rect: Rect  # 캔버스 좌표
+    tab: object  # TabInfo
+    frame_id: int
+    badge_ids: tuple = ()
 
 
 class Overlay:
@@ -59,6 +71,7 @@ class Overlay:
         hidden_windows: Sequence = (),
         thumbnail: Callable[[object], Image.Image | None] | None = None,
         start_in_list: bool = False,
+        tabs_of: Callable[[object], list | None] | None = None,
     ):
         self.root = root
         self.active = active  # 지금 쓰던 창 (Space로 바로 고름). 없으면 None
@@ -69,6 +82,11 @@ class Overlay:
         self._list_ids: list[int] = []
         self._thumb_todo: list[Card] = []
         self._hover_card: Card | None = None
+        self.tabs_of = tabs_of  # 브라우저 창 → 탭 목록 (없거나 1개면 None/짧은 목록)
+        self.tab_window = None  # 탭 목록을 보고 있는 브라우저 창
+        self.tab_rows: list[TabRow] = []
+        self._tab_ids: list[int] = []
+        self._hover_row: TabRow | None = None
         self.shot = screenshot
         self.origin = origin
         # 듀얼 모니터: 선택 화면은 모든 모니터를 덮지만, 안내 문구·담기 바·이름표는
@@ -231,7 +249,9 @@ class Overlay:
     def _toggle_list(self, e=None):
         if self.closed:
             return "break"
-        if self.list_mode:
+        if self.tab_window is not None:
+            self._close_tabs()  # 탭 목록 → 창 목록
+        elif self.list_mode:
             self._close_list()
         else:
             self._open_list()
@@ -282,6 +302,7 @@ class Overlay:
         self.top.after(15, self._next_thumb)
 
     def _close_list(self):
+        self._close_tabs()
         self.list_mode = False
         self._thumb_todo.clear()
         self._hover_card = None
@@ -303,6 +324,9 @@ class Overlay:
         """썸네일을 한 장씩 채운다 (한꺼번에 하면 목록이 늦게 뜬다)."""
         if self.closed or not self.list_mode or not self._thumb_todo:
             return
+        if self.tab_window is not None:  # 탭 목록 위로 썸네일이 그려지지 않게, 닫힐 때까지 잠깐 멈춤
+            self.top.after(100, self._next_thumb)
+            return
         card = self._thumb_todo.pop(0)
         img = None
         if self.thumbnail is not None:
@@ -321,6 +345,93 @@ class Overlay:
                 for i in card.badge_ids:
                     self.canvas.tag_raise(i)
         self.top.after(1, self._next_thumb)
+
+    # ------------------------------------------------------------ 탭 목록 (브라우저)
+    def _open_tabs(self, window, tabs: list):
+        self.tab_window = window
+        self.tab_rows = []
+        self._hover_row = None
+        c = self.canvas
+        m = self._local(self.monitor)
+        ids = self._tab_ids
+        ids.append(c.create_rectangle(m.left, m.top, m.right, m.bottom, fill="#161616", outline=""))
+        ids.append(c.create_text(
+            m.left + 28, m.top + 22, anchor="nw", fill="#ffffff", font=FONT_BOLD,
+            text=f"{window.label} · 탭 {len(tabs)}개",
+        ))
+        ids.append(c.create_text(
+            m.right - 28, m.top + 24, anchor="ne", fill="#bbbbbb", font=FONT,
+            text="클릭: 첨부   Shift+클릭: 담기   Tab: 창 목록으로   Esc: 취소",
+        ))
+        ids.append(c.create_text(
+            m.left + 28, m.top + 52, anchor="nw", fill="#999999", font=FONT_SMALL,
+            text="안 보이는 탭은 잠깐 그 탭으로 바꿔서 찍고 원래 보던 탭으로 돌려놔요",
+        ))
+        area = Rect(m.left + 28, m.top + 86, m.right - 28, m.bottom - 80)
+        rects = rows_layout(len(tabs), area)
+        for tab, r in zip(tabs, rects):
+            sel = bool(getattr(tab, "selected", False))
+            frame = c.create_rectangle(r.left, r.top, r.right, r.bottom,
+                                       fill="#22324a" if sel else "#262626", outline="#444444", width=2)
+            ids.append(frame)
+            prefix = "지금 보이는 탭 · " if sel else ""
+            ids.append(c.create_text(r.left + 14, (r.top + r.bottom) // 2, anchor="w", fill="#eeeeee", font=FONT,
+                                     text=_clip(prefix + _tab_title(tab), r.width * 2 // 3)))
+            self.tab_rows.append(TabRow(r, tab, frame))
+        if len(rects) < len(tabs):
+            ids.append(c.create_text((m.left + m.right) // 2, m.bottom - 64, fill="#bbbbbb", font=FONT_SMALL,
+                                     text=f"화면이 좁아 {len(tabs) - len(rects)}개는 안 보여요"))
+        for item in (self.tray_bg, self.tray_id):
+            c.tag_raise(item)
+        for s_ in self.bag:
+            self._mark_row_for(s_)
+
+    def _close_tabs(self):
+        if self.tab_window is None:
+            return
+        for i in self._tab_ids:
+            self.canvas.delete(i)
+        for row in self.tab_rows:
+            for i in row.badge_ids:
+                self.canvas.delete(i)
+        self._tab_ids = []
+        self.tab_rows = []
+        self.tab_window = None
+        self._hover_row = None
+        # 탭을 담았으면 창 목록 카드에도 표시
+        for s_ in self.bag:
+            self._mark_card_for(s_)
+
+    def _row_at(self, lx: int, ly: int) -> TabRow | None:
+        for row in self.tab_rows:
+            if row.rect.contains(lx, ly):
+                return row
+        return None
+
+    def _hover_tabs(self, lx: int, ly: int):
+        row = self._row_at(lx, ly)
+        if row is self._hover_row:
+            return
+        if self._hover_row is not None and self._hover_row in self.tab_rows:
+            picked = any(s.tab is self._hover_row.tab for s in self.bag)
+            self.canvas.itemconfigure(self._hover_row.frame_id, outline=ACCENT if picked else "#444444")
+        self._hover_row = row
+        if row is not None:
+            self.canvas.itemconfigure(row.frame_id, outline="#85B7EB")
+
+    def _mark_row_for(self, sel: Selection):
+        if sel.kind != "tab" or not _same(sel.window, self.tab_window):
+            return
+        for row in self.tab_rows:
+            if row.tab is sel.tab:
+                c = self.canvas
+                r = row.rect
+                n = self.bag.index(sel) + 1
+                c.itemconfigure(row.frame_id, outline=ACCENT, width=3)
+                bg = c.create_oval(r.right - 36, r.top + 7, r.right - 6, r.bottom - 7, fill=ACCENT, outline="")
+                tx = c.create_text(r.right - 21, (r.top + r.bottom) // 2, text=str(n), fill="#ffffff", font=FONT_BOLD)
+                row.badge_ids = (bg, tx)
+                return
 
     def _card_at(self, lx: int, ly: int) -> Card | None:
         for card in self.cards:
@@ -341,6 +452,8 @@ class Overlay:
 
     def _mark_card_for(self, sel: Selection):
         for card in self.cards:
+            if card.badge_ids:
+                continue
             if _same(card.entry, sel.window):
                 c = self.canvas
                 r = card.rect
@@ -353,6 +466,9 @@ class Overlay:
 
     # ------------------------------------------------------------ 마우스
     def _motion(self, e):
+        if self.tab_window is not None:
+            self._hover_tabs(e.x, e.y)
+            return
         if self.list_mode:
             self._hover_list(e.x, e.y)
             return
@@ -400,15 +516,37 @@ class Overlay:
             self.finish()
             return
 
+        if self.tab_window is not None:  # 탭 목록: 줄 클릭
+            row = self._row_at(e.x, e.y)
+            if row is None:
+                return
+            if any(s.kind == "tab" and _same(s.window, self.tab_window) and s.tab is row.tab for s in self.bag):
+                if not shift:
+                    self.finish()
+                return
+            w = self.tab_window
+            app = w.label.split(" · ")[0]
+            self._add(Selection("tab", w.rect, w, f"{app} 탭 · {_tab_title(row.tab)}", tab=row.tab), shift)
+            return
+
         if self.list_mode:  # 목록에서는 카드 클릭만 (드래그 영역 없음)
             card = self._card_at(e.x, e.y)
             if card is None:
                 return
             entry = card.entry
-            if any(_same(s.window, entry) for s in self.bag):
+            if any(s.kind == "window" and _same(s.window, entry) for s in self.bag):
                 if not shift:
                     self.finish()  # 이미 담은 카드를 Shift 없이 누르면 담은 것 전부 첨부
                 return
+            if not shift and self.tabs_of is not None:
+                tabs = None
+                try:
+                    tabs = self.tabs_of(entry)
+                except Exception:
+                    tabs = None
+                if tabs and len(tabs) >= 2:  # 브라우저 창이면 탭을 한 번 더 고른다
+                    self._open_tabs(entry, tabs)
+                    return
             self._add(Selection("window", entry.rect, entry, entry.label), shift)
             return
 
@@ -444,7 +582,10 @@ class Overlay:
         self.bag.append(sel)
         if shift:
             if self.list_mode:
-                self._mark_card_for(sel)  # 목록에서는 카드에 번호 표시
+                if self.tab_window is not None:
+                    self._mark_row_for(sel)  # 탭 목록에서는 줄에 번호 표시
+                else:
+                    self._mark_card_for(sel)  # 목록에서는 카드에 번호 표시
             else:
                 self._mark(sel)
                 self._hide_box()
@@ -497,3 +638,9 @@ def _same(a, b) -> bool:
         return False
     ha, hb = getattr(a, "hwnd", None), getattr(b, "hwnd", None)
     return a is b if ha is None or hb is None else ha == hb
+
+
+def _tab_title(tab) -> str:
+    from .tabmatch import display_name
+
+    return display_name(getattr(tab, "name", "") or "")

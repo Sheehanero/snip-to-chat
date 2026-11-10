@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from snip_to_chat.tabmatch import is_browser, pick_tab, title_shows_tab, wait_condition
+from snip_to_chat.tabmatch import display_name, is_browser, pick_tab, title_shows_tab, wait_condition
 
 
 @dataclass
@@ -30,6 +30,34 @@ class T:
 )
 def test_title_shows_tab(window, tab, ok):
     assert title_shows_tab(window, tab) is ok
+
+
+@pytest.mark.parametrize(
+    "window, tab, ok",
+    [
+        # 빌드 서버의 실제 엣지에서 본 형식: 다른 탭 수가 창 제목에 붙는다
+        ("BLUETAB and 1 more page - Profile 1 - Microsoft Edge", "BLUETAB", True),
+        ("BLUETAB 및 페이지 1개 더 - 개인 - Microsoft Edge", "BLUETAB", True),
+        ("REDTAB and 1 more page - Profile 1 - Microsoft Edge", "REDTAB - Memory usage - 19.1 MB", True),
+        ("REDTABX - Chrome", "REDTAB", False),
+    ],
+)
+def test_title_shows_tab_edge_formats(window, tab, ok):
+    assert title_shows_tab(window, tab) is ok
+
+
+@pytest.mark.parametrize(
+    "raw, shown",
+    [
+        ("REDTAB - Memory usage - 19.1 MB", "REDTAB"),
+        ("공직자통합메일 - 메모리 사용량 - 120 MB", "공직자통합메일"),
+        ("유튜브 - 오디오 재생 중", "유튜브"),
+        ("GitHub - Sheehanero/snip-to-chat", "GitHub - Sheehanero/snip-to-chat"),
+        ("", "(제목 없는 탭)"),
+    ],
+)
+def test_display_name(raw, shown):
+    assert display_name(raw) == shown
 
 
 def test_title_shows_tab_rejects_short_prefix_collision():

@@ -139,6 +139,25 @@ def grid_layout(
     return out
 
 
+def rows_layout(n: int, area: Rect, row_h: int = 44, gap: int = 8, min_col_w: int = 420, max_col_w: int = 900) -> list[Rect]:
+    """탭 목록 줄 배치: 위에서 아래로 채우고 넘치면 오른쪽 열로. 다 안 들어가면 들어가는 만큼만."""
+    if n <= 0 or area.empty or area.height < row_h:
+        return []
+    per_col = max(1, (area.height + gap) // (row_h + gap))
+    max_cols = max(1, (area.width + gap) // (min_col_w + gap))
+    cols = min(-(-n // per_col), max_cols)
+    col_w = min(max_col_w, (area.width - gap * (cols - 1)) // cols)
+    n = min(n, cols * per_col)
+    left0 = area.left + (area.width - (cols * col_w + gap * (cols - 1))) // 2
+    out = []
+    for i in range(n):
+        c, r = divmod(i, per_col)
+        x = left0 + c * (col_w + gap)
+        y = area.top + r * (row_h + gap)
+        out.append(Rect(x, y, x + col_w, y + row_h))
+    return out
+
+
 def fit_inside(src_w: int, src_h: int, box_w: int, box_h: int) -> tuple[int, int]:
     """비율을 지키며 상자 안에 들어가는 크기."""
     if src_w <= 0 or src_h <= 0 or box_w <= 0 or box_h <= 0:

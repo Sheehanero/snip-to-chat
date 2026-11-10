@@ -63,11 +63,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--standalone", action="store_true", help="MCP 없이 단축키만 (시험용)")
     ap.add_argument("--mcp", action="store_true", help="MCP 서버 모드 강제")
     ap.add_argument("--version", action="store_true")
+    ap.add_argument("--check-uia", action="store_true", help="탭 읽기(UI Automation) 준비 확인")
     args = ap.parse_args(argv)
     _utf8_streams()
 
     if args.version:
         print(f"{APP_NAME} {__version__}")
+        return 0
+
+    if args.check_uia:
+        from .browser_tabs import _client
+
+        U, uia = _client()
+        print(f"UI Automation OK: {type(uia).__name__}, TabItem={U.UIA_TabItemControlTypeId}")
         return 0
 
     if sys.platform != "win32":
