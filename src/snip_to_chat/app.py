@@ -80,7 +80,30 @@ class App:
             self.diag,
         )
         self.hotkeys.start()
-        self.hotkeys.ready.wait(3)
+        self.hotkeys.ready.wait(5)
+
+        self.tray = None
+        try:
+            from .tray import CMD_ACTIVE, CMD_FOLDER, CMD_QUIT, CMD_SELECT, TrayIcon
+
+            self.tray = TrayIcon(
+                self.events,
+                tooltip=f"snip-to-chat · 고르기 {s.select_hotkey.text} (Space=지금 창) · 지금 창 {s.active_hotkey.text}",
+                menu_labels={
+                    CMD_SELECT: f"창·영역 고르기\t{s.select_hotkey.text}",
+                    CMD_ACTIVE: f"지금 쓰던 창 찍기\t{s.active_hotkey.text}",
+                    CMD_FOLDER: "캡처 폴더 열기",
+                    CMD_QUIT: "끝내기",
+                },
+                allow_quit=self.mode == "standalone",
+                icon_path=self.store.directory.parent / "tray.ico",
+            )
+            self.tray.start()
+            self.tray.ready.wait(3)
+            self.diag.set("tray", {"shown": self.tray.added, "error": self.tray.error})
+        except Exception as e:
+            log.warning("알림 영역 아이콘 없이 계속: %s", e)
+            self.diag.set("tray", {"shown": False, "error": str(e)})
 
         if self.mode == "mcp":
             server = McpServer(APP_NAME, __version__, self.tools(), INSTRUCTIONS)
@@ -95,6 +118,9 @@ class App:
         finally:
             self.hotkeys.stop()
             self.hotkeys.join(timeout=2)
+            if self.tray is not None:
+                self.tray.stop()
+                self.tray.join(timeout=2)
         return 0
 
     def _serve(self, server: McpServer):
@@ -120,6 +146,17 @@ class App:
                 elif kind == "hotkey" and arg == HOTKEY_ACTIVE:
                     self.note(f"단축키 {self.settings.active_hotkey.text}: 활성 창 찍기")
                     self._safe(self.capture_active)
+                elif kind == "tray":
+                    self.note(f"알림 영역 아이콘: {arg}")
+                    if arg == "select":
+                        self._safe(self.open_overlay)
+                    elif arg == "active":
+                        self._safe(self.capture_active)
+                    elif arg == "folder":
+                        self._safe(self.open_folder)
+                    elif arg == "quit" and self.mode == "standalone":
+                        self.root.quit()
+                        return
         except queue.Empty:
             pass
         self.root.after(30, self._pump)
@@ -139,9 +176,15 @@ class App:
             print(f"{time.strftime('%H:%M:%S')} {message}", flush=True)
 
     # ================================================================ 선택 화면
+    def open_folder(self):
+        d = self.store.directory
+        d.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(d))
+
     def open_overlay(self):
         if self.overlay is not None and not self.overlay.closed:
             return
+        active = win32.work_window(exclude_pid=self.pid)  # 화면을 얼리기 전에, 지금 쓰던 창부터 기억
         shot, origin = win32.grab_screen()
         windows = win32.list_windows(exclude_pid=self.pid)
         monitors = win32.list_monitors()
@@ -149,7 +192,7 @@ class App:
         self.note(
             f"선택 화면 열림: 모니터 {len(monitors)}대 "
             + " / ".join(f"{m.width}×{m.height}@({m.left},{m.top})" for m in monitors)
-            + f", 고를 수 있는 창 {len(windows)}개"
+            + f", 고를 수 있는 창 {len(windows)}개, 지금 쓰던 창: {active.label if active else '없음'}"
         )
 
         def finished(selections: list[Selection]):
@@ -164,7 +207,7 @@ class App:
 
         self.overlay = Overlay(
             self.root, shot, origin, windows, finished, cancelled,
-            max_items=MAX_IMAGES_PER_MESSAGE, monitors=monitors, cursor=cursor,
+            max_items=MAX_IMAGES_PER_MESSAGE, monitors=monitors, cursor=cursor, active=active,
         )
 
     def _capture_selection(self, sel: Selection, shot: Image.Image, origin: Rect) -> Captured | None:
@@ -190,14 +233,12 @@ class App:
 
     # ================================================================ 활성 창
     def capture_active(self):
-        info = win32.foreground_window()
-        if info is None or info.pid == self.pid:
-            self.note("활성 창 없음")
+        # 앞 창이 Claude·작업 표시줄이면 그 뒤의 창 (알림 영역 메뉴에서 눌렀을 때도 같은 규칙)
+        info = win32.work_window(exclude_pid=self.pid)
+        if info is None:
+            self.note("지금 쓰던 창 없음")
             win32.beep()
-            return
-        if info.exe == "claude.exe":
-            self.note("활성 창이 Claude라서 찍지 않음")
-            self.toast("지금 활성 창이 Claude예요. 찍을 창을 먼저 클릭하세요")
+            self.toast("찍을 창이 없어요")
             return
         res = win32.capture_window(info.hwnd)
         self.diag.capture("active", res.method, res.image.size, res.blank_fallback)

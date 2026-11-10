@@ -413,6 +413,26 @@ def foreground_window() -> WindowInfo | None:
     return window_info(root)
 
 
+def work_window(exclude_pid: int | None = None) -> WindowInfo | None:
+    """'지금 쓰던 창': 앞에 있는 창. 단, 작업 표시줄·바탕화면·Claude·이 프로그램이면
+    그 뒤에 있는 첫 번째 일반 창 (알림 영역 아이콘을 누르면 앞 창이 작업 표시줄이 되기 때문)."""
+    fg = foreground_window()
+    if (
+        fg is not None
+        and fg.class_name not in _SKIP_CLASSES
+        and fg.exe != "claude.exe"
+        and fg.pid != exclude_pid
+        and IsWindowVisible(fg.hwnd)
+        and not IsIconic(fg.hwnd)
+        and fg.rect.width >= 40
+    ):
+        return fg
+    for w in list_windows(exclude_pid=exclude_pid):
+        if w.exe != "claude.exe":
+            return w
+    return None
+
+
 # ---------------------------------------------------------------- 캡처
 def _printwindow(hwnd, width: int, height: int, flags: int) -> Image.Image | None:
     screen_dc = GetDC(None)

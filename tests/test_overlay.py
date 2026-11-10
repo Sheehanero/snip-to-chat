@@ -43,7 +43,7 @@ def root():
     r.destroy()
 
 
-def make(root, cursor=(2500, 500), windows=None):
+def make(root, cursor=(2500, 500), windows=None, active=None):
     from snip_to_chat.overlay import Overlay
 
     got = {"finish": None, "cancel": 0}
@@ -63,6 +63,7 @@ def make(root, cursor=(2500, 500), windows=None):
         lambda: got.__setitem__("cancel", got["cancel"] + 1),
         monitors=[LEFT, RIGHT],
         cursor=cursor,
+        active=active,
     )
     root.update_idletasks()
     return ov, got
@@ -147,6 +148,48 @@ def test_escape_and_tiny_drag(root):
     ov.cancel()
     ov.cancel()  # 두 번 불러도 한 번만
     assert got["cancel"] == 1 and got["finish"] is None
+
+
+ACTIVE = FakeWin("한글 · 지금 쓰던 문서", Rect(100, 100, 1800, 1000))
+
+
+def test_active_window_is_highlighted_on_open(root):
+    ov, _ = make(root, cursor=(500, 500), active=ACTIVE)
+    root.update_idletasks()
+    assert ov.canvas.itemcget(ov.outline_id, "state") == "normal"
+    assert "지금 쓰던 창" in ov.canvas.itemcget(ov.label_id, "text")
+    assert inside(bbox(ov, ov.label_bg), LEFT)
+    ov.cancel()
+
+
+def test_space_attaches_active_window(root):
+    ov, got = make(root, active=ACTIVE)
+    ov._space(Ev(0, 0))
+    assert [s.label for s in got["finish"]] == ["한글 · 지금 쓰던 문서"]
+
+
+def test_shift_space_collects_then_click_attaches_both(root):
+    ov, got = make(root, active=ACTIVE)
+    ov._space(Ev(0, 0, state=0x0001))
+    assert got["finish"] is None and len(ov.bag) == 1
+    ov._press(Ev(2500, 500))
+    ov._release(Ev(2500, 500))  # Shift 없이 고르면 담아 둔 것까지 함께 첨부
+    assert [s.label for s in got["finish"]] == ["한글 · 지금 쓰던 문서", "한글 · 보고서"]
+
+
+def test_space_without_active_does_nothing(root):
+    ov, got = make(root, active=None)
+    ov._space(Ev(0, 0))
+    assert got["finish"] is None and not ov.closed
+    assert "찾지 못했어요" in ov.canvas.itemcget(ov.tray_id, "text")
+    ov.cancel()
+
+
+def test_space_after_close_is_ignored(root):
+    ov, got = make(root, active=ACTIVE)
+    ov.cancel()
+    ov._space(Ev(0, 0))
+    assert got["finish"] is None
 
 
 def test_click_on_desktop_does_nothing(root):

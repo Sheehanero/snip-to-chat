@@ -1,8 +1,8 @@
 """선택 화면 (tkinter).
 
 화면을 얼려서 어둡게 깔고, 마우스 아래 창을 밝게 강조한다.
-클릭 = 그 창 전체, 드래그 = 영역, Shift를 누른 채 고르면 여러 장 담기, Enter = 한 번에 첨부,
-Esc·오른쪽 클릭 = 취소.
+클릭 = 그 창 전체, 드래그 = 영역, Space = 지금 쓰던 창, Shift를 누른 채 고르면 여러 장 담기,
+Enter = 한 번에 첨부, Esc·오른쪽 클릭 = 취소.
 """
 
 from __future__ import annotations
@@ -43,8 +43,10 @@ class Overlay:
         max_items: int = 20,
         monitors: Sequence[Rect] = (),
         cursor: tuple[int, int] | None = None,
+        active=None,
     ):
         self.root = root
+        self.active = active  # 지금 쓰던 창 (Space로 바로 고름). 없으면 None
         self.shot = screenshot
         self.origin = origin
         # 듀얼 모니터: 선택 화면은 모든 모니터를 덮지만, 안내 문구·담기 바·이름표는
@@ -81,7 +83,7 @@ class Overlay:
         self.label_id = c.create_text(0, 0, anchor="nw", text="", font=FONT, fill="#111111", state="hidden")
         self.marks: list[int] = []
 
-        hint = "클릭: 창 전체   드래그: 영역   Shift 누른 채: 여러 장 담기   Enter: 첨부   Esc: 취소"
+        hint = "Space: 지금 쓰던 창   클릭: 창 전체   드래그: 영역   Shift 누른 채: 여러 장   Enter: 첨부   Esc: 취소"
         self.hint_bg = c.create_rectangle(0, 0, 0, 0, fill="#1f1f1f", outline="")
         self.hint_id = c.create_text(0, 0, text=hint, font=FONT, fill="#ffffff")
         self.tray_bg = c.create_rectangle(0, 0, 0, 0, fill="#ffffff", outline=ACCENT, width=2, state="hidden")
@@ -100,6 +102,11 @@ class Overlay:
             top.bind(seq, lambda e: self.cancel())
         for seq in ("<Return>", "<KP_Enter>"):
             top.bind(seq, lambda e: self.finish())
+        top.bind("<space>", self._space)
+
+        # 열자마자 지금 쓰던 창을 강조해 둔다: 그대로 Space(또는 클릭)면 그 창이 찍힌다
+        if self.active is not None:
+            self._show_box(self.active.rect, f"지금 쓰던 창 · {self.active.label}   Space: 이 창 찍기")
 
         top.lift()
         top.focus_force()
@@ -250,7 +257,20 @@ class Overlay:
             if w is None:
                 return
             sel = Selection("window", w.rect, w, w.label)
+        self._add(sel, shift)
 
+    def _space(self, e):
+        """Space = 지금 쓰던 창. Shift+Space = 담기만."""
+        if self.closed:
+            return
+        if self.active is None:
+            self._update_tray("지금 쓰던 창을 찾지 못했어요 · 클릭해서 골라 주세요")
+            return
+        a = self.active
+        self._add(Selection("window", a.rect, a, a.label), bool(e.state & SHIFT_MASK))
+
+    def _add(self, sel: Selection, shift: bool):
+        """담기(shift) 또는 담고 바로 첨부. 담아 둔 게 있으면 Shift 없이 고른 것까지 함께 첨부한다."""
         if len(self.bag) >= self.max_items:
             self._update_tray(f"한 메시지에 {self.max_items}장까지예요 · Enter로 첨부하세요")
             return
