@@ -1,0 +1,108 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: 섞임 방지·manifest 검사
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: assets/ 밖에 이미지가 커밋됐는지 확인
+        run: |
+          bad=$(git ls-files | grep -Ei '\.(png|jpe?g|bmp|gif|webp|tiff?|dib)$' | grep -v '^assets/' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::assets/ 밖의 이미지 파일이 저장소에 있어요 (캡처가 섞였을 수 있음):"
+            echo "$bad"
+            exit 1
+          fi
+          echo "이미지 섞임 없음"
+      - name: manifest 검증
+        run: npx --yes @anthropic-ai/mcpb@2 validate manifest.json
+      - name: 버전 일치 확인
+        shell: python
+        run: |
+          import json, os, re, sys
+          m = json.load(open("manifest.json", encoding="utf-8"))["version"]
+          src = open("src/snip_to_chat/__init__.py", encoding="utf-8").read()
+          p = re.search(r'__version__ = "([^"]+)"', src).group(1)
+          ref = os.environ.get("GITHUB_REF", "")
+          tag = ref[len("refs/tags/v"):] if ref.startswith("refs/tags/v") else None
+          print(f"manifest {m} / 패키지 {p} / 태그 {tag}")
+          if m != p or (tag and tag != m):
+              print("::error::manifest.json, __init__.py, 태그의 버전이 서로 달라요")
+              sys.exit(1)
+
+  build:
+    name: Windows 빌드·시험
+    needs: guard
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 의존성 설치
+        run: python -m pip install -r requirements-dev.txt
+      - name: 단위 시험
+        run: python -m pytest -q
+      - name: 실행 파일 만들기 (PyInstaller, 폴더형)
+        run: >-
+          pyinstaller --noconfirm --clean --onedir --console
+          --name snip-to-chat --paths src --collect-submodules snip_to_chat
+          packaging/entry.py
+      - name: 실행 확인
+        run: dist\snip-to-chat\snip-to-chat.exe --version
+      - name: MCP 연결 시험 (Claude 데스크톱처럼 띄우고 종료까지)
+        run: python scripts/smoke_mcp.py dist\snip-to-chat\snip-to-chat.exe
+      - name: 자체 점검 (참고용, 실패해도 계속)
+        continue-on-error: true
+        run: dist\snip-to-chat\snip-to-chat.exe --selftest
+      - name: MCP 번들(.mcpb) 만들기
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force bundle\server | Out-Null
+          Copy-Item -Recurse dist\snip-to-chat bundle\server\snip-to-chat
+          Copy-Item manifest.json, LICENSE bundle\
+          npx --yes @anthropic-ai/mcpb@2 validate bundle\manifest.json
+          npx --yes @anthropic-ai/mcpb@2 pack bundle snip-to-chat.mcpb
+      - name: 휴대용 zip 만들기 (설치 전 점검용)
+        shell: pwsh
+        run: |
+          Copy-Item packaging\selftest.bat, packaging\run-standalone.bat dist\snip-to-chat\
+          Compress-Archive -Path dist\snip-to-chat -DestinationPath snip-to-chat-portable.zip -Force
+          Get-Item snip-to-chat.mcpb, snip-to-chat-portable.zip | Format-Table Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snip-to-chat
+          path: |
+            snip-to-chat.mcpb
+            snip-to-chat-portable.zip
+          if-no-files-found: error
+
+  release:
+    name: Release 올리기
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: snip-to-chat
+          path: out
+      - name: Release 만들기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" out/snip-to-chat.mcpb out/snip-to-chat-portable.zip
+          --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes

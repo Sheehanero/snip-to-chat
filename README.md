@@ -1,1 +1,85 @@
 # snip-to-chat
+
+Windows에서 단축키로 창이나 영역을 골라 **Claude 데스크톱 입력칸에 바로 첨부**하는 도구예요.
+Mac판 Claude의 빠른 캡처(Option 두 번)를 Windows에서 비슷하게 쓰려고 만들었어요.
+
+> 지금은 **시제품(v0.1)** 이에요. 아래 "확인 항목"을 실제 PC에서 점검하는 단계예요.
+
+## 쓰는 법
+
+| 단축키 (기본값) | 하는 일 |
+|---|---|
+| `Ctrl+Alt+A` | 선택 화면 열기 |
+| `Ctrl+Alt+W` | 선택 없이 지금 쓰던 창 바로 찍기 |
+
+선택 화면에서는:
+
+- **클릭** → 마우스 아래 창 전체 (크롬·엣지 창이 여러 개여도 각각 따로 골라져요)
+- **드래그** → 그 영역만 (한글·PDF 등 어느 창이든)
+- **Shift 누른 채 클릭·드래그** → 여러 장 담기, **Enter**(또는 아래 안내 바 클릭)로 한 번에 첨부
+- **Esc** 또는 **오른쪽 클릭** → 취소
+
+캡처하면 Claude 창이 앞으로 나오고 입력칸에 이미지가 붙어요. **자동 전송은 하지 않아요.** 질문을 적고 직접 보내면 돼요.
+한 메시지에 최대 20장까지 담을 수 있어요(claude.ai 한도).
+
+## 설치
+
+1. [Releases](https://github.com/Sheehanero/snip-to-chat/releases)에서 `snip-to-chat.mcpb`를 받아요.
+2. 파일을 더블클릭하면 Claude 데스크톱에 설치 창이 떠요 → **설치**.
+3. 단축키나 저장 폴더는 Claude 설정 → 확장 프로그램 → snip-to-chat 에서 바꿀 수 있어요.
+
+단축키 표기 예: `Ctrl+Alt+A`, `Ctrl+Shift+1`, `F9`, `Win+Shift+F2`
+(글자·숫자 키만 단독으로 쓰거나 `Shift+글자`는 타이핑과 겹쳐서 받지 않아요.)
+
+### 설치 전에 이 PC에서 먼저 점검하기 (선택)
+
+`snip-to-chat-portable.zip`을 받아 풀고 `selftest.bat`을 실행하면 단축키 등록, Claude 창 찾기, 창 캡처, 클립보드, 저장 폴더를 차례로 점검해요.
+`run-standalone.bat`은 Claude 연결 없이 단축키만 켜서 선택 화면을 시험해 볼 수 있어요.
+
+## 시제품 확인 항목
+
+| # | 확인할 것 | 보는 방법 |
+|---|---|---|
+| 1 | Claude 앱이 켜져 있는 동안 단축키 감시가 살아 있는지 | 단축키로 선택 화면이 뜨는지. Claude에게 "snip-to-chat diagnostics 보여줘" → [1] 감시 스레드 "살아 있음", 단축키 "등록됨". Claude를 끄면 작업 관리자에서 `snip-to-chat.exe`가 사라지는지 |
+| 2 | Claude 창을 앞으로 가져와 붙여넣는지 | 다른 창을 보다가 캡처 → Claude 창이 앞으로 오고 입력칸에 붙는지. Claude가 최소화돼 있을 때도. diagnostics [2] |
+| 3 | 크롬·엣지 창이 검게 안 찍히는지 | `selftest.bat`의 [3] 결과가 OK인지. 다른 창에 반쯤 가려진 창을 클릭해도 그 창 내용이 온전히 찍히는지 |
+| 4 | 백신이 막지 않는지 | `.mcpb` 설치나 zip을 풀 때 차단·격리 알림이 뜨는지. 전역 키보드 훅 대신 Windows 단축키 등록(RegisterHotKey) 방식을 써서 위험을 줄였어요 |
+
+## 캡처 저장과 섞임 방지
+
+캡처는 `%LOCALAPPDATA%\snip-to-chat\captures`에 저장되고 최근 200장만 남겨요. 캡처가 공개 저장소에 섞이지 않도록 세 겹으로 막아요.
+
+1. 기본 저장 위치가 저장소와 상관없는 앱 데이터 폴더예요.
+2. 저장 폴더나 그 상위 폴더가 git 저장소면 프로그램이 **저장을 거부**해요 (설정에서 잘못 바꿔도 막혀요).
+3. 이 저장소의 `.gitignore`가 이미지 파일을 전부 막고 `assets/`만 허용해요. 빌드 자동화도 `assets/` 밖 이미지가 커밋되면 실패해요.
+
+로그: `%LOCALAPPDATA%\snip-to-chat\snip-to-chat.log`
+
+## 알려진 한계
+
+- 붙여넣을 때 클립보드를 쓰기 때문에, 캡처 뒤에는 클립보드 내용이 마지막 캡처 이미지로 바뀌어 있어요.
+- 이 프로그램이 켜져 있는 동안 같은 단축키를 쓰는 다른 프로그램(예: 한글의 단축키)은 그 조합이 안 먹어요. 겹치면 설정에서 바꾸세요.
+- 코드 서명이 없는 실행 파일이라 처음 받을 때 Windows가 경고를 띄울 수 있어요.
+- 영역 캡처는 선택 화면을 연 순간의 화면을 잘라내요. 창 클릭은 그 창을 직접 그려서 찍지만, 그게 실패하면(빈 화면) 화면에 보이는 그대로 잘라내요.
+
+## 개발
+
+```
+src/snip_to_chat/
+  config.py       단축키 파싱·설정
+  geometry.py     좌표·창 판정
+  imaging.py      빈 화면 판정, PNG/DIB 변환
+  storage.py      저장 + git 저장소 가드
+  mcp_server.py   MCP(stdio) 서버
+  win32.py        Windows API (창 목록, PrintWindow, 클립보드, 활성화, 단축키)
+  overlay.py      선택 화면 (tkinter)
+  app.py          조립 + MCP 도구
+  selftest.py     자체 점검
+```
+
+```
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+`v*` 태그를 올리면 GitHub Actions가 Windows에서 빌드·시험한 뒤 Release에 `.mcpb`와 휴대용 zip을 올려요.

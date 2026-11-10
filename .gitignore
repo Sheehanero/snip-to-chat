@@ -218,3 +218,26 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------
+# snip-to-chat: 캡처 이미지가 저장소에 섞이지 않게 막는 규칙
+# 이미지는 전부 무시하고, 아이콘을 넣을 assets/ 폴더만 예외로 허용한다.
+# (캡처는 기본적으로 %LOCALAPPDATA%\snip-to-chat\captures 에 저장되고,
+#  프로그램은 git 저장소 안의 폴더에는 아예 저장을 거부한다.)
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.gif
+*.webp
+*.tif
+*.tiff
+*.dib
+!assets/
+!assets/**
+captures/
+selftest-report*.json
+
+# 번들 빌드 산출물
+bundle/server/
+*.mcpb

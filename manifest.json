@@ -1,0 +1,94 @@
+{
+  "manifest_version": "0.3",
+  "name": "snip-to-chat",
+  "display_name": "캡처해서 채팅에 붙이기",
+  "version": "0.1.0",
+  "description": "단축키로 창이나 영역을 골라 Claude 데스크톱 입력칸에 바로 첨부해요 (Windows).",
+  "long_description": "단축키를 누르면 화면이 어두워지고 마우스 아래 창이 강조됩니다. 클릭하면 그 창 전체, 드래그하면 영역, Shift를 누른 채 고르면 여러 장을 담았다가 Enter로 한 번에 첨부합니다. 보조 단축키는 지금 쓰던 창을 바로 찍습니다. 자동 전송은 하지 않습니다. 캡처는 git 저장소 밖의 폴더에만 저장됩니다.",
+  "author": {
+    "name": "Sheehanero",
+    "url": "https://github.com/Sheehanero"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sheehanero/snip-to-chat.git"
+  },
+  "homepage": "https://github.com/Sheehanero/snip-to-chat",
+  "support": "https://github.com/Sheehanero/snip-to-chat/issues",
+  "license": "MIT",
+  "keywords": [
+    "screenshot",
+    "capture",
+    "windows",
+    "clipboard"
+  ],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/snip-to-chat/snip-to-chat.exe",
+    "mcp_config": {
+      "command": "${__dirname}/server/snip-to-chat/snip-to-chat",
+      "args": [
+        "--mcp"
+      ],
+      "env": {
+        "SNIP_HOTKEY_SELECT": "${user_config.select_hotkey}",
+        "SNIP_HOTKEY_ACTIVE": "${user_config.active_hotkey}",
+        "SNIP_CAPTURE_DIR": "${user_config.capture_dir}",
+        "SNIP_AUTO_PASTE": "${user_config.auto_paste}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "list_windows",
+      "description": "지금 화면에 보이는 창 목록을 보여줘요"
+    },
+    {
+      "name": "capture_window",
+      "description": "창 하나를 캡처해 이미지로 돌려줘요"
+    },
+    {
+      "name": "get_recent_captures",
+      "description": "단축키로 최근에 찍은 캡처를 돌려줘요"
+    },
+    {
+      "name": "diagnostics",
+      "description": "단축키·활성화·캡처·저장 폴더 상태를 보여줘요"
+    }
+  ],
+  "compatibility": {
+    "platforms": [
+      "win32"
+    ]
+  },
+  "user_config": {
+    "select_hotkey": {
+      "type": "string",
+      "title": "선택 화면 단축키",
+      "description": "창·영역을 고르는 화면을 여는 단축키. 예: Ctrl+Alt+A, Ctrl+Shift+1, F9",
+      "default": "Ctrl+Alt+A",
+      "required": false
+    },
+    "active_hotkey": {
+      "type": "string",
+      "title": "활성 창 바로 찍기 단축키",
+      "description": "선택 없이 지금 쓰던 창을 바로 찍는 단축키",
+      "default": "Ctrl+Alt+W",
+      "required": false
+    },
+    "capture_dir": {
+      "type": "string",
+      "title": "캡처 저장 폴더 (비우면 기본값)",
+      "description": "비워두면 %LOCALAPPDATA%\\snip-to-chat\\captures. git 저장소 안의 폴더는 지정해도 저장하지 않아요.",
+      "default": "",
+      "required": false
+    },
+    "auto_paste": {
+      "type": "boolean",
+      "title": "Claude 입력칸에 자동으로 붙여넣기",
+      "description": "끄면 캡처만 저장하고 붙여넣지 않아요 (get_recent_captures로 가져올 수 있어요)",
+      "default": true,
+      "required": false
+    }
+  }
+}
