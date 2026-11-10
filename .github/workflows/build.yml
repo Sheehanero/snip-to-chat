@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  release:
+    types: [published]  # GitHub 웹의 Releases 화면에서 새 태그로 발행해도 빌드해서 파일을 붙임
   pull_request:
   workflow_dispatch:
 
@@ -104,14 +106,20 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # 태그 push와 웹 발행이 같이 일어나도 차례로 올리게
+    concurrency: release-${{ github.ref }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: snip-to-chat
           path: out
-      - name: Release 만들기
+      - name: Release 만들기 (이미 있으면 파일만 올리기)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME" out/snip-to-chat.mcpb out/snip-to-chat-portable.zip
-          --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          files="out/snip-to-chat.mcpb out/snip-to-chat-portable.zip"
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" $files --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" $files --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+          fi

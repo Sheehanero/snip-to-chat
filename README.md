@@ -98,4 +98,4 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-`v*` 태그를 올리면 GitHub Actions가 Windows에서 빌드·시험한 뒤 Release에 `.mcpb`와 휴대용 zip을 올려요.
+GitHub 웹의 Releases 화면에서 `v0.5.0` 같은 새 태그로 Release를 발행하거나(태그 버전은 `manifest.json`과 같아야 해요) `v*` 태그를 올리면, GitHub Actions가 Windows에서 빌드·시험한 뒤 그 Release에 `.mcpb`와 휴대용 zip을 붙여요.
