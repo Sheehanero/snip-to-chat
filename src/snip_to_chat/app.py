@@ -115,8 +115,10 @@ class App:
                     self.root.quit()
                     return
                 if kind == "hotkey" and arg == HOTKEY_SELECT:
+                    self.note(f"단축키 {self.settings.select_hotkey.text}: 선택 화면")
                     self._safe(self.open_overlay)
                 elif kind == "hotkey" and arg == HOTKEY_ACTIVE:
+                    self.note(f"단축키 {self.settings.active_hotkey.text}: 활성 창 찍기")
                     self._safe(self.capture_active)
         except queue.Empty:
             pass
@@ -130,6 +132,12 @@ class App:
             self.diag.error(f"{fn.__name__}: {e}")
             self.toast(f"오류: {e}")
 
+    def note(self, message: str) -> None:
+        """작동 기록: 로그 파일에 남기고, 시험 모드에서는 콘솔에도 보여준다."""
+        log.info(message)
+        if self.mode == "standalone":
+            print(f"{time.strftime('%H:%M:%S')} {message}", flush=True)
+
     # ================================================================ 선택 화면
     def open_overlay(self):
         if self.overlay is not None and not self.overlay.closed:
@@ -137,13 +145,17 @@ class App:
         shot, origin = win32.grab_screen()
         windows = win32.list_windows(exclude_pid=self.pid)
 
+        self.note(f"선택 화면 열림: 화면 {origin.width}×{origin.height}, 고를 수 있는 창 {len(windows)}개")
+
         def finished(selections: list[Selection]):
             self.overlay = None
+            self.note(f"선택 {len(selections)}개: " + ", ".join(s.label for s in selections))
             items = [self._capture_selection(sel, shot, origin) for sel in selections]
             self.deliver([i for i in items if i is not None])
 
         def cancelled():
             self.overlay = None
+            self.note("선택 화면 취소")
 
         self.overlay = Overlay(
             self.root, shot, origin, windows, finished, cancelled, max_items=MAX_IMAGES_PER_MESSAGE
@@ -174,9 +186,11 @@ class App:
     def capture_active(self):
         info = win32.foreground_window()
         if info is None or info.pid == self.pid:
+            self.note("활성 창 없음")
             win32.beep()
             return
         if info.exe == "claude.exe":
+            self.note("활성 창이 Claude라서 찍지 않음")
             self.toast("지금 활성 창이 Claude예요. 찍을 창을 먼저 클릭하세요")
             return
         res = win32.capture_window(info.hwnd)
@@ -190,6 +204,10 @@ class App:
         for it in items:
             saved = self.store.save(it.image, it.kind)
             self.diag.set("storage", {"dir": str(self.store.directory), "safe": self.store.safe, "reason": self.store.reason})
+            self.note(
+                f"캡처: {it.label} · {it.image.width}×{it.image.height} · {it.method} · "
+                + (f"저장 {saved.path.name}" if saved.path else f"저장 안 함({saved.reason})")
+            )
             with self.recent_lock:
                 self.recent.appendleft(
                     {
@@ -216,6 +234,11 @@ class App:
                 "requested": len(items),
                 "note": report.note,
             },
+        )
+        self.note(
+            f"붙여넣기: Claude 창 {'찾음' if report.claude_found else '못 찾음'}, "
+            f"앞으로 가져오기 {report.method or '실패'}, {report.pasted}/{len(items)}장"
+            + (f" · {report.note}" if report.note else "")
         )
         if not report.activated:
             self.diag.error(report.note)

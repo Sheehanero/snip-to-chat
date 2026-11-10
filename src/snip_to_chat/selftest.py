@@ -53,7 +53,9 @@ def run_selftest(settings: Settings, dpi: str) -> int:
     _p("")
     _p("[3] 창 캡처 (가려진 창도 내용이 찍히는지, 검게 나오지 않는지)")
     store = CaptureStore(resolve_capture_dir(settings.capture_dir_override))
-    windows = win32.list_windows(exclude_pid=os.getpid())
+    # Claude 창은 붙여넣을 곳이지 찍을 대상이 아니라서 판정에서 뺀다
+    # (Claude 창은 PrintWindow가 빈 화면을 돌려줘 화면 잘라내기로 대체되는 것이 정상)
+    windows = [w for w in win32.list_windows(exclude_pid=os.getpid()) if w.exe != "claude.exe"]
     targets = [w for w in windows if w.exe in BROWSERS] + [w for w in windows if w.exe in DOCS]
     others = [w for w in windows if w not in targets][:3]
     results = []
