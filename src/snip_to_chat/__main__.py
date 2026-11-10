@@ -41,6 +41,15 @@ def _setup_logging(mode: str) -> None:
     root.addHandler(sh)
 
 
+def _utf8_streams() -> None:
+    """파이프로 연결되면 Windows 기본 인코딩(cp1252·cp949)이라 한글 출력·로그가 깨지거나 죽는다."""
+    for s in (sys.stdout, sys.stderr):
+        try:
+            s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def _stdin_is_console() -> bool:
     try:
         return sys.stdin is not None and sys.stdin.isatty()
@@ -55,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--mcp", action="store_true", help="MCP 서버 모드 강제")
     ap.add_argument("--version", action="store_true")
     args = ap.parse_args(argv)
+    _utf8_streams()
 
     if args.version:
         print(f"{APP_NAME} {__version__}")

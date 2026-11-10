@@ -17,6 +17,7 @@ import time
 
 
 def main(exe: str) -> int:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     p = subprocess.Popen([exe, "--mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     lines: queue.Queue = queue.Queue()
 
