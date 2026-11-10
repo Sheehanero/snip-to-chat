@@ -109,8 +109,8 @@ IMAGE_ICON, LR_LOADFROMFILE = 1, 0x10
 SM_CXSMICON, SM_CYSMICON = 49, 50
 IDI_APPLICATION = 32512
 
-CMD_SELECT, CMD_ACTIVE, CMD_FOLDER, CMD_QUIT = 1, 2, 3, 4
-ACTIONS = {CMD_SELECT: "select", CMD_ACTIVE: "active", CMD_FOLDER: "folder", CMD_QUIT: "quit"}
+CMD_SELECT, CMD_ACTIVE, CMD_FOLDER, CMD_QUIT, CMD_LIST = 1, 2, 3, 4, 5
+ACTIONS = {CMD_SELECT: "select", CMD_LIST: "list", CMD_ACTIVE: "active", CMD_FOLDER: "folder", CMD_QUIT: "quit"}
 
 
 def make_icon_file(path: Path) -> Path:
@@ -249,8 +249,9 @@ class TrayIcon(threading.Thread):
     def _menu(self):
         menu = CreatePopupMenu()
         try:
-            for cmd in (CMD_SELECT, CMD_ACTIVE, CMD_FOLDER):
-                AppendMenuW(menu, MF_STRING, cmd, self.menu_labels[cmd])
+            for cmd in (CMD_SELECT, CMD_LIST, CMD_ACTIVE, CMD_FOLDER):
+                if cmd in self.menu_labels:
+                    AppendMenuW(menu, MF_STRING, cmd, self.menu_labels[cmd])
             AppendMenuW(menu, MF_SEPARATOR, 0, None)
             if self.allow_quit:
                 AppendMenuW(menu, MF_STRING, CMD_QUIT, self.menu_labels[CMD_QUIT])

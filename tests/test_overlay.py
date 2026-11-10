@@ -23,6 +23,7 @@ ORIGIN = Rect(0, 0, 3840, 1080)
 class FakeWin:
     label: str
     rect: Rect
+    minimized: bool = False
 
 
 @dataclass
@@ -43,7 +44,7 @@ def root():
     r.destroy()
 
 
-def make(root, cursor=(2500, 500), windows=None, active=None):
+def make(root, cursor=(2500, 500), windows=None, active=None, hidden=(), thumbnail=None, start_in_list=False):
     from snip_to_chat.overlay import Overlay
 
     got = {"finish": None, "cancel": 0}
@@ -64,6 +65,9 @@ def make(root, cursor=(2500, 500), windows=None, active=None):
         monitors=[LEFT, RIGHT],
         cursor=cursor,
         active=active,
+        hidden_windows=hidden,
+        thumbnail=thumbnail,
+        start_in_list=start_in_list,
     )
     root.update_idletasks()
     return ov, got
@@ -197,4 +201,99 @@ def test_click_on_desktop_does_nothing(root):
     ov._press(Ev(1000, 1000))
     ov._release(Ev(1000, 1000))
     assert got["finish"] is None and not ov.closed
+    ov.cancel()
+
+
+# ---------------------------------------------------------------- 창 목록 (Tab)
+COVERED = FakeWin("Edge · 크롬 뒤에 완전히 가려진 창", Rect(100, 100, 280, 280))
+MINI = FakeWin("한글 · 최소화된 문서", Rect(-32000, -32000, -31840, -31972), minimized=True)
+
+
+def list_windows():
+    return [
+        FakeWin("Chrome · 맨 앞 창", Rect(0, 0, 1000, 700)),
+        COVERED,  # z-순서상 크롬 뒤: 일반 화면에서는 클릭할 수 없다
+        FakeWin("한글 · 보고서", Rect(2000, 100, 3800, 1000)),
+    ]
+
+
+def center(card):
+    return Ev((card.rect.left + card.rect.right) // 2, (card.rect.top + card.rect.bottom) // 2)
+
+
+def test_covered_window_cannot_be_clicked_on_screen(root):
+    ov, got = make(root, cursor=(500, 500), windows=list_windows())
+    ov._press(Ev(150, 150))
+    ov._release(Ev(150, 150))
+    assert got["finish"][0].label == "Chrome · 맨 앞 창"  # 그래서 창 목록이 필요
+
+
+def test_tab_lists_covered_and_minimized_windows(root):
+    ov, _ = make(root, cursor=(500, 500), windows=list_windows(), hidden=[MINI])
+    ov._toggle_list()
+    root.update_idletasks()
+    assert ov.list_mode
+    assert [c.entry.label for c in ov.cards] == [w.label for w in list_windows()] + [MINI.label]
+    assert all(inside(c.rect.as_box(), LEFT) for c in ov.cards)  # 연 모니터 안에 격자
+    ov._toggle_list()  # Tab 다시 → 원래 화면
+    assert not ov.list_mode and ov.cards == []
+    ov.cancel()
+
+
+def test_list_thumbnails_skip_minimized(root):
+    calls = []
+
+    def thumb(w):
+        calls.append(w.label)
+        return Image.new("RGB", (1920, 1080), (90, 120, 200))
+
+    ov, _ = make(root, cursor=(500, 500), windows=list_windows(), hidden=[MINI], thumbnail=thumb)
+    ov._toggle_list()
+    for _ in range(10):
+        ov._next_thumb()
+    assert MINI.label not in calls and len(calls) == 3
+    by_label = {c.entry.label: c for c in ov.cards}
+    assert by_label[COVERED.label].thumb_id is not None
+    assert by_label[MINI.label].thumb_id is None
+    ov.cancel()
+
+
+def test_list_click_attaches_covered_window(root):
+    ov, got = make(root, cursor=(500, 500), windows=list_windows(), hidden=[MINI])
+    ov._toggle_list()
+    card = next(c for c in ov.cards if c.entry is COVERED)
+    ov._press(center(card))
+    ov._release(center(card))
+    assert [s.label for s in got["finish"]] == [COVERED.label]
+
+
+def test_list_shift_click_then_click_minimized(root):
+    ov, got = make(root, cursor=(500, 500), windows=list_windows(), hidden=[MINI])
+    ov._toggle_list()
+    cov = next(c for c in ov.cards if c.entry is COVERED)
+    mini = next(c for c in ov.cards if c.entry is MINI)
+    e = center(cov)
+    ov._press(Ev(e.x, e.y, 0x0001))
+    ov._release(Ev(e.x, e.y, 0x0001))
+    assert got["finish"] is None and len(ov.bag) == 1 and cov.badge_ids  # 번호 표시
+    ov._press(center(mini))
+    ov._release(center(mini))
+    sels = got["finish"]
+    assert [s.label for s in sels] == [COVERED.label, MINI.label] and sels[1].window.minimized
+
+
+def test_start_in_list_and_space(root):
+    ov, got = make(root, cursor=(2500, 500), windows=list_windows(), active=COVERED, start_in_list=True)
+    assert ov.list_mode and all(inside(c.rect.as_box(), RIGHT) for c in ov.cards)
+    ov._space(Ev(0, 0))
+    assert [s.label for s in got["finish"]] == [COVERED.label]
+
+
+def test_list_has_no_region_drag(root):
+    ov, got = make(root, cursor=(500, 500), windows=list_windows())
+    ov._toggle_list()
+    ov._press(Ev(1500, 900))
+    ov._drag(Ev(1700, 1000))
+    ov._release(Ev(1700, 1000))
+    assert got["finish"] is None and not ov.bag
     ov.cancel()

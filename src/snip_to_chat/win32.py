@@ -252,6 +252,7 @@ class WindowInfo:
     pid: int
     exe: str  # 소문자 실행 파일 이름
     rect: Rect  # 화면에 보이는 테두리 (DWM extended frame bounds)
+    minimized: bool = False
 
     @property
     def label(self) -> str:
@@ -370,6 +371,32 @@ def list_windows(exclude_pid: int | None = None) -> list[WindowInfo]:
             if rect.width < 40 or rect.height < 30:
                 return True
             found.append(WindowInfo(int(hwnd), title, cls, pid, exe_of_pid(pid), rect))
+        except Exception:
+            pass
+        return True
+
+    EnumWindows(WNDENUMPROC(cb), 0)
+    return found
+
+
+def list_minimized_windows(exclude_pid: int | None = None) -> list[WindowInfo]:
+    """작업 표시줄로 내려간(최소화된) 일반 창 목록."""
+    found: list[WindowInfo] = []
+
+    def cb(hwnd, _lparam):
+        try:
+            if not IsWindowVisible(hwnd) or not IsIconic(hwnd) or _is_cloaked(hwnd):
+                return True
+            cls = _class(hwnd)
+            title = _text(hwnd)
+            if cls in _SKIP_CLASSES or not title:
+                return True
+            if GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW:
+                return True
+            pid = _pid(hwnd)
+            if exclude_pid is not None and pid == exclude_pid:
+                return True
+            found.append(WindowInfo(int(hwnd), title, cls, pid, exe_of_pid(pid), window_rect(hwnd), minimized=True))
         except Exception:
             pass
         return True
@@ -547,6 +574,28 @@ def capture_window(hwnd, screen: tuple[Image.Image, Rect] | None = None) -> Capt
             raise CaptureError("창이 화면 밖에 있어요")
         img = shot.crop(box.as_box())
     return CaptureResult(img, "screen", True)
+
+
+SW_SHOWNOACTIVATE, SW_SHOWMINNOACTIVE = 4, 7
+
+
+def capture_minimized(hwnd, settle: float = 0.4) -> CaptureResult:
+    """최소화된 창: 포커스를 뺏지 않고 잠깐 복원해서 찍은 뒤 다시 최소화한다."""
+    if not hwnd or not IsWindow(hwnd):
+        raise CaptureError("창이 이미 닫혔어요")
+    if not IsIconic(hwnd):
+        return capture_window(hwnd)
+    ShowWindow(hwnd, SW_SHOWNOACTIVATE)
+    try:
+        time.sleep(settle)  # 창이 다시 그려질 시간
+        res = capture_window(hwnd)
+        return CaptureResult(res.image, res.method + "+restore", res.blank_fallback)
+    finally:
+        ShowWindow(hwnd, SW_SHOWMINNOACTIVE)
+
+
+def capture_any(hwnd) -> CaptureResult:
+    return capture_minimized(hwnd) if IsIconic(hwnd) else capture_window(hwnd)
 
 
 # ---------------------------------------------------------------- 클립보드

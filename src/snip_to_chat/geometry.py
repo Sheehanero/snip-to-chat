@@ -92,6 +92,61 @@ def place_in(monitor: Rect, width: int, x: int) -> int:
     return max(monitor.left + 4, min(x, monitor.right - width - 4))
 
 
+def grid_layout(
+    n: int,
+    area: Rect,
+    aspect: float = 1.6,
+    gap: int = 16,
+    label_h: int = 30,
+    min_w: int = 150,
+    max_w: int = 420,
+) -> list[Rect]:
+    """창 목록의 카드 배치. 모두 들어가는 가장 큰 카드 크기를 고른다.
+
+    다 안 들어가면 가장 작은 크기로 들어가는 만큼만 돌려준다 (돌려준 개수 < n).
+    카드 높이 = 썸네일(폭/aspect) + 이름 줄(label_h). 격자는 영역 위쪽 가운데에 둔다.
+    """
+    if n <= 0 or area.empty:
+        return []
+    best: tuple[int, int, int] | None = None  # (열, 폭, 높이)
+    for cols in range(1, n + 1):
+        w = (area.width - gap * (cols - 1)) // cols
+        if w < min_w:
+            break
+        w = min(w, max_w)
+        h = int(w / aspect) + label_h
+        rows = -(-n // cols)
+        if rows * h + gap * (rows - 1) <= area.height and (best is None or w > best[1]):
+            best = (cols, w, h)
+    if best is None:
+        w = min(min_w, area.width)
+        h = int(w / aspect) + label_h
+        cols = max(1, (area.width + gap) // (w + gap))
+        rows = max(1, (area.height + gap) // (h + gap))
+        if h > area.height:
+            return []
+        n = min(n, cols * rows)
+        best = (cols, w, h)
+    cols, w, h = best
+    used_cols = min(cols, n)
+    left0 = area.left + (area.width - (used_cols * w + gap * (used_cols - 1))) // 2
+    out = []
+    for i in range(n):
+        r, c = divmod(i, cols)
+        x = left0 + c * (w + gap)
+        y = area.top + r * (h + gap)
+        out.append(Rect(x, y, x + w, y + h))
+    return out
+
+
+def fit_inside(src_w: int, src_h: int, box_w: int, box_h: int) -> tuple[int, int]:
+    """비율을 지키며 상자 안에 들어가는 크기."""
+    if src_w <= 0 or src_h <= 0 or box_w <= 0 or box_h <= 0:
+        return (0, 0)
+    s = min(box_w / src_w, box_h / src_h)
+    return (max(1, int(src_w * s)), max(1, int(src_h * s)))
+
+
 def to_local(rect: Rect, origin_left: int, origin_top: int) -> Rect:
     """가상 화면 좌표 → 오버레이 캔버스 좌표 (캔버스 (0,0) = 가상 화면 왼쪽 위)."""
     return rect.offset(-origin_left, -origin_top)

@@ -1,6 +1,18 @@
 from dataclasses import dataclass
 
-from snip_to_chat.geometry import Rect, hit_test, is_drag, monitor_at, place_in, rect_from_drag, to_local
+import pytest
+
+from snip_to_chat.geometry import (
+    Rect,
+    fit_inside,
+    grid_layout,
+    hit_test,
+    is_drag,
+    monitor_at,
+    place_in,
+    rect_from_drag,
+    to_local,
+)
 
 
 @dataclass
@@ -83,6 +95,54 @@ def test_place_in_keeps_box_inside_monitor():
     assert place_in(RIGHT, 400, 3700) == 3840 - 400 - 4  # 오른쪽 끝에서 안으로
     assert place_in(RIGHT, 400, 1800) == 1920 + 4  # 왼쪽 모니터로 넘어가지 않게
     assert place_in(RIGHT, 400, 2500) == 2500
+
+
+def _no_overlap(rects):
+    for i, a in enumerate(rects):
+        for b in rects[i + 1:]:
+            if not a.intersect(b).empty:
+                return False
+    return True
+
+
+def _all_inside(rects, area):
+    return all(r.intersect(area) == r for r in rects)
+
+
+@pytest.mark.parametrize("n", [1, 2, 7, 20, 23, 40])
+def test_grid_fits_all_on_one_monitor(n):
+    area = Rect(1944, 60, 3816, 1010)  # 오른쪽 모니터 안쪽 (여백 뺀 영역)
+    cards = grid_layout(n, area)
+    assert len(cards) == n
+    assert _no_overlap(cards) and _all_inside(cards, area)
+    assert len({(c.width, c.height) for c in cards}) == 1  # 크기 통일
+
+
+def test_grid_prefers_big_cards_when_few():
+    area = Rect(0, 0, 1872, 950)
+    assert grid_layout(1, area)[0].width == 420  # 최대 폭
+    assert grid_layout(20, area)[0].width >= 250  # 20개여도 알아볼 만한 크기
+
+
+def test_grid_truncates_when_too_many():
+    area = Rect(0, 0, 800, 400)
+    cards = grid_layout(500, area)
+    assert 0 < len(cards) < 500
+    assert _no_overlap(cards) and _all_inside(cards, area)
+
+
+def test_grid_empty_cases():
+    assert grid_layout(0, Rect(0, 0, 100, 100)) == []
+    assert grid_layout(5, Rect(0, 0, 0, 0)) == []
+    assert grid_layout(5, Rect(0, 0, 1000, 50)) == []  # 카드 한 장도 안 들어가는 높이
+
+
+@pytest.mark.parametrize(
+    "src, box, expected",
+    [((1920, 1080), (300, 200), (300, 168)), ((500, 1000), (300, 200), (100, 200)), ((0, 10), (5, 5), (0, 0))],
+)
+def test_fit_inside(src, box, expected):
+    assert fit_inside(*src, *box) == expected
 
 
 def test_intersect_disjoint_is_empty():

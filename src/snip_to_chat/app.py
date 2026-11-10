@@ -123,13 +123,14 @@ class App:
         self.hotkeys.ready.wait(5)
 
         try:
-            from .tray import CMD_ACTIVE, CMD_FOLDER, CMD_QUIT, CMD_SELECT, TrayIcon
+            from .tray import CMD_ACTIVE, CMD_FOLDER, CMD_LIST, CMD_QUIT, CMD_SELECT, TrayIcon
 
             self.tray = TrayIcon(
                 self.events,
                 tooltip=f"snip-to-chat · 고르기 {s.select_hotkey.text} (Space=지금 창) · 지금 창 {s.active_hotkey.text}",
                 menu_labels={
                     CMD_SELECT: f"창·영역 고르기\t{s.select_hotkey.text}",
+                    CMD_LIST: f"창 목록에서 고르기 (가려진 창)\t{s.select_hotkey.text} → Tab",
                     CMD_ACTIVE: f"지금 쓰던 창 찍기\t{s.active_hotkey.text}",
                     CMD_FOLDER: "캡처 폴더 열기",
                     CMD_QUIT: "끝내기",
@@ -175,6 +176,8 @@ class App:
                         self._safe(self.open_overlay)
                     elif arg == "active":
                         self._safe(self.capture_active)
+                    elif arg == "list":
+                        self._safe(self.open_list)
                     elif arg == "folder":
                         self._safe(self.open_folder)
                     elif arg == "quit" and self.mode == "standalone":
@@ -204,18 +207,32 @@ class App:
         d.mkdir(parents=True, exist_ok=True)
         os.startfile(str(d))
 
-    def open_overlay(self):
+    def open_list(self):
+        self.open_overlay(start_in_list=True)
+
+    def _thumbnail(self, w):
+        """창 목록 썸네일: 가려진 창도 PrintWindow로 내용 그대로. 최소화된 창은 목록에서 고를 때 찍는다."""
+        if getattr(w, "minimized", False):
+            return None
+        try:
+            return win32.capture_window(w.hwnd).image
+        except win32.CaptureError:
+            return None
+
+    def open_overlay(self, start_in_list: bool = False):
         if self.overlay is not None and not self.overlay.closed:
             return
         active = win32.work_window(exclude_pid=self.pid)  # 화면을 얼리기 전에, 지금 쓰던 창부터 기억
         shot, origin = win32.grab_screen()
         windows = win32.list_windows(exclude_pid=self.pid)
+        hidden = win32.list_minimized_windows(exclude_pid=self.pid)
         monitors = win32.list_monitors()
         cursor = win32.cursor_pos()
         self.note(
             f"선택 화면 열림: 모니터 {len(monitors)}대 "
             + " / ".join(f"{m.width}×{m.height}@({m.left},{m.top})" for m in monitors)
-            + f", 고를 수 있는 창 {len(windows)}개, 지금 쓰던 창: {active.label if active else '없음'}"
+            + f", 고를 수 있는 창 {len(windows)}개(최소화 {len(hidden)}개 별도), 지금 쓰던 창: {active.label if active else '없음'}"
+            + (" · 창 목록으로 시작" if start_in_list else "")
         )
 
         def finished(selections: list[Selection]):
@@ -231,6 +248,7 @@ class App:
         self.overlay = Overlay(
             self.root, shot, origin, windows, finished, cancelled,
             max_items=MAX_IMAGES_PER_MESSAGE, monitors=monitors, cursor=cursor, active=active,
+            hidden_windows=hidden, thumbnail=self._thumbnail, start_in_list=start_in_list,
         )
 
     def _capture_selection(self, sel: Selection, shot: Image.Image, origin: Rect) -> Captured | None:
@@ -242,7 +260,10 @@ class App:
             self.diag.capture("region", "screen", img.size, False)
             return Captured(img, "region", sel.label, "screen")
         try:
-            res = win32.capture_window(sel.window.hwnd, screen=(shot, origin))
+            if getattr(sel.window, "minimized", False) or win32.IsIconic(sel.window.hwnd):
+                res = win32.capture_minimized(sel.window.hwnd)  # 잠깐 펼쳐서 찍고 다시 내림
+            else:
+                res = win32.capture_window(sel.window.hwnd, screen=(shot, origin))
         except win32.CaptureError as e:
             self.diag.error(f"창 캡처 실패({sel.label}): {e}")
             box = sel.rect.intersect(origin).offset(-origin.left, -origin.top)

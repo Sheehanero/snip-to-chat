@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "snip-to-chat",
   "display_name": "캡처해서 채팅에 붙이기",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "단축키로 창이나 영역을 골라 Claude 데스크톱 입력칸에 바로 첨부해요 (Windows).",
   "long_description": "단축키를 누르면 화면이 어두워지고 마우스 아래 창이 강조됩니다. 클릭하면 그 창 전체, 드래그하면 영역, Shift를 누른 채 고르면 여러 장을 담았다가 Enter로 한 번에 첨부합니다. 보조 단축키는 지금 쓰던 창을 바로 찍습니다. 자동 전송은 하지 않습니다. 캡처는 git 저장소 밖의 폴더에만 저장됩니다.",
   "author": {
