@@ -782,26 +782,26 @@ class Leadership(threading.Thread):
         self.on_lead = on_lead
         self.handle = CreateMutexW(None, False, name)
         self.is_leader = False
-        self._stop = threading.Event()
+        self._halt = threading.Event()
 
     def run(self):
         if not self.handle:  # 뮤텍스를 못 만들면 막지 않고 바로 맡는다
             self.is_leader = True
             self.on_lead()
-            self._stop.wait()
+            self._halt.wait()
             return
-        while not self._stop.is_set():
+        while not self._halt.is_set():
             r = WaitForSingleObject(self.handle, 500)
             if r in (WAIT_OBJECT_0, WAIT_ABANDONED):
                 self.is_leader = True
                 _log.info("단축키·아이콘 담당 시작%s", " (앞서 맡던 프로세스가 꺼져서 이어받음)" if r == WAIT_ABANDONED else "")
                 self.on_lead()
-                self._stop.wait()
+                self._halt.wait()
                 ReleaseMutex(self.handle)
                 return
 
     def stop(self):
-        self._stop.set()
+        self._halt.set()
 
 
 def try_lead_now(name: str = LEADER_MUTEX) -> bool:
