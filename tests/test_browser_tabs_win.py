@@ -15,6 +15,8 @@ import time
 
 import pytest
 
+from snip_to_chat.tabmatch import same_name
+
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows 전용")
 
 BROWSERS = {
@@ -96,7 +98,7 @@ def test_capture_background_tab_and_restore(exe_name, tmp_path):
         time.sleep(0.5)
         after = browser_tabs.list_tabs(win.hwnd)
         now = next(t for t in after if t.selected)
-        assert now.name == shown.name, "원래 보던 탭으로 돌아오지 않음"
+        assert same_name(now.name, shown.name), f"원래 보던 탭으로 돌아오지 않음: {shown.name} → {now.name}"
         assert shown.name.split()[0] in win32._text(win.hwnd)
     finally:
         _kill_tree(p.pid)
@@ -176,7 +178,7 @@ def test_previewer_shows_every_tab_and_restores(exe_name, tmp_path):
             assert (_is_green(c) if color == "green" else _is(c, color)), (key, c)
         time.sleep(0.4)
         now = [t for t in browser_tabs.list_tabs(win.hwnd) if t.selected][0].name
-        assert now == before, f"원래 탭으로 안 돌아옴: {before} → {now}"
+        assert same_name(now, before), f"원래 탭으로 안 돌아옴: {before} → {now}"
     finally:
         _kill_tree(p.pid)
 
@@ -206,6 +208,6 @@ def test_previewer_stop_midway_still_restores(tmp_path):
         time.sleep(0.4)
         now = [t for t in browser_tabs.list_tabs(win.hwnd) if t.selected][0].name
         print(f"중간 멈춤: {len(got)}장 찍고 멈춤 · 복귀 {before} → {now}")
-        assert now == before
+        assert same_name(now, before), f"원래 탭으로 안 돌아옴: {before} → {now}"
     finally:
         _kill_tree(p.pid)

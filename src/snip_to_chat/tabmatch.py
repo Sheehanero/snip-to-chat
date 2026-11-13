@@ -64,8 +64,15 @@ def wait_condition(now_title: str, before_title: str, tab_name: str) -> bool:
     return _norm(now_title) != _norm(before_title) and title_shows_tab(now_title, tab_name)
 
 
+def _tab_key(name: str) -> str:
+    """탭을 알아보는 이름: 엣지의 ' - Memory usage - 19.1 MB'처럼 계속 바뀌거나
+    생겼다 없어지는 꼬리를 뗀 제목. 이걸로 비교해야 목록을 연 뒤 메모리 숫자가 바뀌어도
+    같은 탭을 다시 찾는다."""
+    return _norm(_STATUS_TAIL.sub("", name or "")) or _norm(name)
+
+
 def same_name(a: str, b: str) -> bool:
-    return _norm(a) == _norm(b)
+    return _tab_key(a) == _tab_key(b)
 
 
 _STATUS_TAIL = re.compile(
@@ -85,9 +92,9 @@ def pick_tab(tabs: list, index: int, name: str):
 
     목록을 연 뒤에 탭이 열리거나 닫혀 순서가 바뀌어도 엉뚱한 탭을 찍지 않게 한다.
     """
-    if 0 <= index < len(tabs) and _norm(tabs[index].name) == _norm(name):
+    if 0 <= index < len(tabs) and same_name(tabs[index].name, name):
         return tabs[index]
-    same = [t for t in tabs if _norm(t.name) == _norm(name)]
+    same = [t for t in tabs if same_name(t.name, name)]
     if len(same) == 1:
         return same[0]
     if same:

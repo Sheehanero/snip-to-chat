@@ -2,7 +2,9 @@ from dataclasses import dataclass
 
 import pytest
 
-from snip_to_chat.tabmatch import display_name, is_browser, list_order, pick_tab, title_shows_tab, wait_condition
+from snip_to_chat.tabmatch import (
+    display_name, is_browser, list_order, pick_tab, same_name, title_shows_tab, wait_condition,
+)
 
 
 @dataclass
@@ -89,6 +91,26 @@ def test_pick_tab_duplicate_names_nearest_position():
     tabs = [T("새 탭", 0), T("메일", 1), T("새 탭", 2), T("새 탭", 3)]
     assert pick_tab(tabs, 2, "새 탭") is tabs[2]
     assert pick_tab(tabs, 4, "새 탭") is tabs[3]  # 자리 이름이 달라졌으면 가장 가까운 같은 이름
+
+
+def test_pick_tab_ignores_changing_status_tail():
+    # 엣지는 탭 이름 끝의 메모리 사용량이 계속 바뀌고, 그 꼬리가 생겼다 없어지기도 한다
+    # (빌드 서버에서 'REDTAB' → 'REDTAB - Memory usage - 19.4 MB'로 바뀐 것을 봄)
+    tabs = [T("REDTAB - Memory usage - 19.4 MB", 0), T("BLUETAB", 1)]
+    assert pick_tab(tabs, 0, "REDTAB - Memory usage - 19.1 MB") is tabs[0]
+    assert pick_tab(tabs, 0, "REDTAB") is tabs[0]
+    assert pick_tab([T("REDTAB", 0)], 0, "REDTAB - Memory usage - 19.1 MB").name == "REDTAB"
+    assert pick_tab([T("유튜브", 0)], 0, "유튜브 - 오디오 재생 중").name == "유튜브"
+    # 꼬리를 떼도 다른 탭은 다른 탭
+    assert pick_tab(tabs, 0, "BLUETAB - Memory usage - 3 MB") is tabs[1]
+    assert pick_tab(tabs, 0, "GREENTAB - Memory usage - 19.1 MB") is None
+
+
+def test_same_name_ignores_status_tail_only():
+    assert same_name("REDTAB", "REDTAB - Memory usage - 19.4 MB")
+    assert same_name("메일 - 메모리 사용량 - 120 MB", "메일 - 메모리 사용량 - 98 MB")
+    assert not same_name("GitHub - A", "GitHub - B")  # ' - 다른 말'은 꼬리가 아니다
+    assert not same_name("REDTAB", "BLUETAB - Memory usage - 1 MB")
 
 
 def test_pick_tab_closed_returns_none():
